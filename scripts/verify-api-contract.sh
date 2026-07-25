@@ -19,8 +19,11 @@ done
 )
 
 jq -e '
+    . as $root |
     (.openapi | type == "string" and startswith("3.")) and
-    (.info.version == "1.0.0") and
+    (.info.version == "2.0.0") and
+    (.components.securitySchemes.serviceToken
+        | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
     (.paths["/api/v1/payments/wallet"].get.operationId == "wallet") and
     (.paths["/api/v1/payments/transactions"].get.operationId == "transactions") and
     (.paths["/api/v1/payments/pricing"].get.operationId == "pricing") and
@@ -28,6 +31,25 @@ jq -e '
     (.paths["/api/v1/payments/reservations"].post.operationId == "createReservation") and
     (.paths["/api/v1/payments/reservations/{reservationId}/commit"].post.operationId == "commitReservation") and
     (.paths["/api/v1/payments/reservations/{reservationId}/release"].post.operationId == "releaseReservation") and
+    ([
+        "/api/v1/payments/wallet",
+        "/api/v1/payments/transactions",
+        "/api/v1/payments/demo-purchase",
+        "/api/v1/payments/estimate",
+        "/api/v1/payments/reservations",
+        "/api/v1/payments/reservations/{reservationId}/commit",
+        "/api/v1/payments/reservations/{reservationId}/release",
+        "/api/v1/payments/confirm-stripe-purchase"
+      ] | all(. as $path |
+        ((if $path == "/api/v1/payments/wallet" or $path == "/api/v1/payments/transactions"
+              then $root.paths[$path].get
+              else $root.paths[$path].post end)) as $operation |
+        ($operation.security == [{"serviceToken": []}]) and
+        ($operation.parameters
+          | any(.name == "X-Payment-Owner" and .in == "header" and .required == true))
+      )) and
+    (.paths["/api/v1/payments/pricing"].get.security == [{"serviceToken": []}]) and
+    ((.paths | tostring) | contains("X-User-Id") | not) and
     (.components.schemas.ConfirmStripePurchaseRequest.required
         | index("userId") != null and index("pricingPlanId") != null and index("stripeSessionId") != null) and
     (.components.schemas.CreateReservationRequest.properties.estimatedTokens.minimum == 1) and

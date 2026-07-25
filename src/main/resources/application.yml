@@ -19,6 +19,10 @@ spring:
     show-sql: true
 
 payment:
+  security:
+    payment-gateway-token: ${PAYMENT_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
+    cv-cover-letter-token: ${CV_COVER_LETTER_TO_PAYMENT_SERVICE_TOKEN:}
+    stripe-gateway-token: ${STRIPE_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
   free-starter-tokens: ${FREE_STARTER_TOKENS:20000}
   pricing-plans:
     - id: starter

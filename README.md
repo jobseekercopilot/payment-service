@@ -31,6 +31,12 @@ mvn -B --no-transfer-progress clean verify
 See [`docs/CONTRACT_GOVERNANCE.md`](docs/CONTRACT_GOVERNANCE.md) for ownership,
 versioning and consumer-pin rules.
 
+All payment API operations are service-authenticated and route-authorized.
+Owner-scoped operations use only the trusted `X-Payment-Owner` context; the
+legacy caller-controlled `X-User-Id` header is rejected. See
+[`docs/PAYMENT_IDENTITY_BOUNDARY.md`](docs/PAYMENT_IDENTITY_BOUNDARY.md) for the
+caller matrix, required secrets, owner predicate and rotation constraints.
+
 ## Licence
 
 Proprietary and confidential. See `LICENSE`.
