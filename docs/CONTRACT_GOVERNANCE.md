@@ -5,6 +5,10 @@ fulfilment and reservation operations. Consumers may pin or generate from the
 reviewed producer bytes, but must not export a running instance and treat that
 as the source of truth.
 
+Version 2.0 establishes the breaking trusted-identity boundary: each operation
+requires `serviceToken`, and each owner-scoped operation requires
+`X-Payment-Owner`. The retired `X-User-Id` contract must not be reintroduced.
+
 `contracts/SHA256SUMS` protects the reviewed contract.
 `scripts/verify-api-contract.sh` enforces the current compatibility boundary
 and, after Maven verification, compares the source contract byte-for-structure

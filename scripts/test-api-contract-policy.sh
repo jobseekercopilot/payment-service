@@ -56,4 +56,26 @@ if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/token-bound
     exit 1
 fi
 
+copy_contract "$temporary_dir/owner-boundary"
+jq 'del(.paths["/api/v1/payments/wallet"].get.parameters)' \
+    "$temporary_dir/owner-boundary/openapi.json" \
+    > "$temporary_dir/owner-boundary/changed.json"
+mv "$temporary_dir/owner-boundary/changed.json" "$temporary_dir/owner-boundary/openapi.json"
+(cd "$temporary_dir/owner-boundary" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/owner-boundary/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of trusted payment-owner context" >&2
+    exit 1
+fi
+
+copy_contract "$temporary_dir/service-identity"
+jq 'del(.components.securitySchemes.serviceToken)' \
+    "$temporary_dir/service-identity/openapi.json" \
+    > "$temporary_dir/service-identity/changed.json"
+mv "$temporary_dir/service-identity/changed.json" "$temporary_dir/service-identity/openapi.json"
+(cd "$temporary_dir/service-identity" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/service-identity/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of service authentication" >&2
+    exit 1
+fi
+
 echo "API contract policy negative tests passed"

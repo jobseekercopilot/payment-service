@@ -105,8 +105,13 @@ public class PaymentService {
     }
 
     @Transactional
-    public DemoPurchaseResponse confirmStripePurchase(ConfirmStripePurchaseRequest request) {
+    public DemoPurchaseResponse confirmStripePurchase(
+            String authenticatedOwner,
+            ConfirmStripePurchaseRequest request) {
         long startedAt = System.nanoTime();
+        if (!authenticatedOwner.equals(request.getUserId())) {
+            throw new BadRequestException("Payment owner does not match authenticated context");
+        }
         PaymentProperties.PricingPlan plan = paymentProperties.activePricingPlan(request.getPricingPlanId())
                 .orElseThrow(() -> new BadRequestException(
                         "Unknown or inactive pricing plan: " + request.getPricingPlanId()));
@@ -359,12 +364,8 @@ public class PaymentService {
     }
 
     private AiTokenReservation loadReservation(String userId, UUID reservationId) {
-        AiTokenReservation reservation = reservationRepository.findById(reservationId)
+        return reservationRepository.findByIdAndUserId(reservationId, userId)
                 .orElseThrow(() -> new BadRequestException("Reservation was not found"));
-        if (!reservation.getUserId().equals(userId)) {
-            throw new BadRequestException("Reservation does not belong to user");
-        }
-        return reservation;
     }
 
     private DemoPurchaseResponse recordStripePurchase(

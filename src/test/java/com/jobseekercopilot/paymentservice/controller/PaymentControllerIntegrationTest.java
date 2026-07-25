@@ -17,6 +17,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -28,6 +29,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class PaymentControllerIntegrationTest {
+    private static final String SERVICE_TOKEN_HEADER = "X-Service-Token";
+    private static final String OWNER_HEADER = "X-Payment-Owner";
+    private static final String PAYMENT_GATEWAY_TOKEN =
+            "payment-gateway-test-token-0000000000000001";
+    private static final String CV_COVER_LETTER_TOKEN =
+            "cv-cover-letter-test-token-000000000000001";
+    private static final String STRIPE_GATEWAY_TOKEN =
+            "stripe-gateway-test-token-0000000000000001";
+
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AiTokenWalletRepository walletRepository;
@@ -43,17 +53,17 @@ class PaymentControllerIntegrationTest {
 
     @Test
     void walletCreatedForNewUserAndStarterTokensGrantedOnce() throws Exception {
-        mockMvc.perform(get("/api/v1/payments/wallet").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/wallet").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value("user-123"))
                 .andExpect(jsonPath("$.balanceTokens").value(20000))
                 .andExpect(jsonPath("$.freeTrialGranted").value(true));
 
-        mockMvc.perform(get("/api/v1/payments/wallet").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/wallet").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceTokens").value(20000));
 
-        mockMvc.perform(get("/api/v1/payments/transactions").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(1)))
                 .andExpect(jsonPath("$.transactions[0].transactionType").value("FREE_TRIAL_GRANTED"));
@@ -61,7 +71,8 @@ class PaymentControllerIntegrationTest {
 
     @Test
     void pricingPlansReturned() throws Exception {
-        mockMvc.perform(get("/api/v1/payments/pricing"))
+        mockMvc.perform(get("/api/v1/payments/pricing")
+                        .header(SERVICE_TOKEN_HEADER, PAYMENT_GATEWAY_TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.plans", hasSize(3)))
                 .andExpect(jsonPath("$.plans[0].id").value("starter"))
@@ -77,13 +88,13 @@ class PaymentControllerIntegrationTest {
 
     @Test
     void demoPurchaseAddsTokensAndCreatesNewestTransaction() throws Exception {
-        mockMvc.perform(get("/api/v1/payments/wallet").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/wallet").with(paymentGateway("user-123")))
                 .andExpect(status().isOk());
 
         DemoPurchaseRequest request = new DemoPurchaseRequest();
         request.setPricingPlanId("starter");
         mockMvc.perform(post("/api/v1/payments/demo-purchase")
-                        .header("X-User-Id", "user-123")
+                        .with(paymentGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -92,7 +103,7 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.transaction.transactionType").value("DEMO_PURCHASE"))
                 .andExpect(jsonPath("$.transaction.tokenAmount").value(100000));
 
-        mockMvc.perform(get("/api/v1/payments/transactions").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(2)))
                 .andExpect(jsonPath("$.transactions[0].transactionType").value("DEMO_PURCHASE"))
@@ -109,6 +120,7 @@ class PaymentControllerIntegrationTest {
         request.setStripePaymentIntentId("pi_test_123");
 
         mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(stripeGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -128,19 +140,21 @@ class PaymentControllerIntegrationTest {
         request.setStripeSessionId("cs_test_duplicate");
 
         mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(stripeGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(120000));
 
         mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(stripeGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(120000))
                 .andExpect(jsonPath("$.transaction.referenceId").value("cs_test_duplicate"));
 
-        mockMvc.perform(get("/api/v1/payments/transactions").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(2)))
                 .andExpect(jsonPath("$.transactions[0].transactionType").value("PURCHASE"))
@@ -156,6 +170,7 @@ class PaymentControllerIntegrationTest {
         request.setStripeSessionId("cs_test_bad_amount");
 
         mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(stripeGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
@@ -170,7 +185,7 @@ class PaymentControllerIntegrationTest {
         affordable.setEstimatedOutputTokens(3000);
 
         mockMvc.perform(post("/api/v1/payments/estimate")
-                        .header("X-User-Id", "user-123")
+                        .with(paymentGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(affordable)))
                 .andExpect(status().isOk())
@@ -185,7 +200,7 @@ class PaymentControllerIntegrationTest {
         expensive.setEstimatedOutputTokens(40000);
 
         mockMvc.perform(post("/api/v1/payments/estimate")
-                        .header("X-User-Id", "user-123")
+                        .with(paymentGateway("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(expensive)))
                 .andExpect(status().isOk())
@@ -201,7 +216,7 @@ class PaymentControllerIntegrationTest {
         reservationRequest.setReferenceId("job-123");
 
         String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
-                        .header("X-User-Id", "user-123")
+                        .with(cvCoverLetter("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(reservationRequest)))
                 .andExpect(status().isOk())
@@ -222,7 +237,7 @@ class PaymentControllerIntegrationTest {
         commitRequest.setDescription("CV and cover letter generation");
 
         mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/commit", reservationId)
-                        .header("X-User-Id", "user-123")
+                        .with(cvCoverLetter("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(commitRequest)))
                 .andExpect(status().isOk())
@@ -232,7 +247,7 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.wallet.lifetimeSpentTokens").value(7300))
                 .andExpect(jsonPath("$.spendTransaction.transactionType").value("SPEND"));
 
-        mockMvc.perform(get("/api/v1/payments/transactions").header("X-User-Id", "user-123"))
+        mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(4)))
                 .andExpect(jsonPath("$.transactions[0].transactionType").value("RESERVATION_RELEASED"))
@@ -248,7 +263,7 @@ class PaymentControllerIntegrationTest {
         reservationRequest.setEstimatedTokens(10000);
 
         String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
-                        .header("X-User-Id", "user-123")
+                        .with(cvCoverLetter("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(reservationRequest)))
                 .andExpect(status().isOk())
@@ -260,7 +275,7 @@ class PaymentControllerIntegrationTest {
         ReleaseReservationRequest releaseRequest = new ReleaseReservationRequest();
         releaseRequest.setReason("LLM generation failed");
         mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/release", reservationId)
-                        .header("X-User-Id", "user-123")
+                        .with(cvCoverLetter("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(releaseRequest)))
                 .andExpect(status().isOk())
@@ -275,7 +290,7 @@ class PaymentControllerIntegrationTest {
         reservationRequest.setEstimatedTokens(60000);
 
         mockMvc.perform(post("/api/v1/payments/reservations")
-                        .header("X-User-Id", "user-123")
+                        .with(cvCoverLetter("user-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(reservationRequest)))
                 .andExpect(status().isPaymentRequired())
@@ -283,9 +298,101 @@ class PaymentControllerIntegrationTest {
     }
 
     @Test
-    void missingUserIdReturnsControlledError() throws Exception {
+    void missingServiceIdentityReturnsControlledError() throws Exception {
         mockMvc.perform(get("/api/v1/payments/wallet"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("Missing X-User-Id header"));
+                .andExpect(jsonPath("$.code").value("SERVICE_AUTHENTICATION_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("Valid service authentication is required."));
+    }
+
+    @Test
+    void forgedServiceIdentityFailsClosed() throws Exception {
+        mockMvc.perform(get("/api/v1/payments/wallet")
+                        .header(SERVICE_TOKEN_HEADER, "forged")
+                        .header(OWNER_HEADER, "user-123"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("SERVICE_AUTHENTICATION_REQUIRED"));
+    }
+
+    @Test
+    void callerSelectedLegacyIdentityIsRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/payments/wallet")
+                        .with(paymentGateway("owner-123"))
+                        .header("X-User-Id", "victim-456"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CALLER_IDENTITY_REJECTED"));
+    }
+
+    @Test
+    void serviceTokensAreAuthorizedOnlyForTheirOperations() throws Exception {
+        mockMvc.perform(post("/api/v1/payments/reservations")
+                        .with(paymentGateway("user-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"feature":"CV_AND_COVER_LETTER_GENERATION","estimatedTokens":1000}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("SERVICE_NOT_AUTHORIZED"));
+    }
+
+    @Test
+    void conflictingStripeOwnerCannotGrantCredit() throws Exception {
+        ConfirmStripePurchaseRequest request = new ConfirmStripePurchaseRequest();
+        request.setUserId("attacker-selected");
+        request.setPricingPlanId("starter");
+        request.setTokenAmount(100000);
+        request.setStripeSessionId("cs_test_owner_mismatch");
+
+        mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(stripeGateway("authenticated-owner"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("Payment owner does not match authenticated context"));
+        org.assertj.core.api.Assertions.assertThat(walletRepository.count()).isZero();
+    }
+
+    @Test
+    void crossUserReservationLookupIsNonEnumerating() throws Exception {
+        CreateReservationRequest reservationRequest = new CreateReservationRequest();
+        reservationRequest.setFeature("CV_AND_COVER_LETTER_GENERATION");
+        reservationRequest.setEstimatedTokens(1000);
+        String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
+                        .with(cvCoverLetter("owner-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(reservationRequest)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String reservationId = objectMapper.readTree(reservationJson).get("reservationId").asText();
+
+        CommitReservationRequest request = new CommitReservationRequest();
+        request.setActualTokens(500L);
+        mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/commit", reservationId)
+                        .with(cvCoverLetter("other-owner"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Reservation was not found"));
+    }
+
+    private RequestPostProcessor paymentGateway(String owner) {
+        return serviceIdentity(PAYMENT_GATEWAY_TOKEN, owner);
+    }
+
+    private RequestPostProcessor cvCoverLetter(String owner) {
+        return serviceIdentity(CV_COVER_LETTER_TOKEN, owner);
+    }
+
+    private RequestPostProcessor stripeGateway(String owner) {
+        return serviceIdentity(STRIPE_GATEWAY_TOKEN, owner);
+    }
+
+    private RequestPostProcessor serviceIdentity(String token, String owner) {
+        return request -> {
+            request.addHeader(SERVICE_TOKEN_HEADER, token);
+            request.addHeader(OWNER_HEADER, owner);
+            return request;
+        };
     }
 }
