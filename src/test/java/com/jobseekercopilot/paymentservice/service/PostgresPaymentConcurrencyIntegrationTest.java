@@ -155,6 +155,12 @@ class PostgresPaymentConcurrencyIntegrationTest {
                         TransactionType.RESERVATION,
                         TransactionType.SPEND,
                         TransactionType.RESERVATION_RELEASED);
+        assertThatThrownBy(() -> paymentService.commitReservation(
+                        userId, reservationId, commitRequest(7_301)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Reservation was already committed with a different token amount");
+        assertThat(transactionRepository.findByWalletIdOrderBySequenceNumberAsc(wallet.getId()))
+                .hasSize(4);
         assertThat(reconciliationService.reconcile(wallet.getId()).reconciled()).isTrue();
     }
 
@@ -196,6 +202,23 @@ class PostgresPaymentConcurrencyIntegrationTest {
 
     @Test
     void invalidAndOverflowingAmountsFailWithoutLedgerMutation() {
+        String underflowUser = uniqueUser("underflow-check");
+        UUID reservationId = createReservation(underflowUser);
+        assertThatThrownBy(() -> paymentService.commitReservation(
+                        underflowUser, reservationId, commitRequest(20_001)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Actual token usage exceeded reservation and available balance");
+        AiTokenWallet underflowWallet =
+                walletRepository.findByUserId(underflowUser).orElseThrow();
+        assertThat(underflowWallet.getBalanceTokens()).isEqualTo(10_000);
+        assertThat(reservationRepository.findById(reservationId).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.RESERVED);
+        assertThat(transactionRepository.findByWalletIdOrderBySequenceNumberAsc(
+                        underflowWallet.getId()))
+                .hasSize(2);
+        assertThat(reconciliationService.reconcile(underflowWallet.getId()).reconciled())
+                .isTrue();
+
         String userId = uniqueUser("range-check");
         paymentService.wallet(userId);
         AiTokenWallet wallet = walletRepository.findByUserId(userId).orElseThrow();
