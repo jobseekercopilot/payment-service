@@ -221,6 +221,7 @@ class PaymentControllerIntegrationTest {
         CreateReservationRequest reservationRequest = new CreateReservationRequest();
         reservationRequest.setFeature("CV_AND_COVER_LETTER_GENERATION");
         reservationRequest.setEstimatedTokens(10000);
+        reservationRequest.setOperationKey("controller-commit");
         reservationRequest.setReferenceType("JOB_APPLICATION");
         reservationRequest.setReferenceId("job-123");
 
@@ -236,6 +237,14 @@ class PaymentControllerIntegrationTest {
                 .getResponse()
                 .getContentAsString();
         String reservationId = objectMapper.readTree(reservationJson).get("reservationId").asText();
+
+        mockMvc.perform(get("/api/v1/payments/reservations/{reservationId}", reservationId)
+                        .with(cvCoverLetter("user-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operationKey").value("controller-commit"))
+                .andExpect(jsonPath("$.status").value("RESERVED"))
+                .andExpect(jsonPath("$.lastTransitionReason").value("CREATED"))
+                .andExpect(jsonPath("$.expiresAt").exists());
 
         CommitReservationRequest commitRequest = new CommitReservationRequest();
         commitRequest.setActualTokens(7300L);
@@ -264,6 +273,12 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.committedTokens").value(7300))
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(12700));
 
+        mockMvc.perform(get("/api/v1/payments/reservations/{reservationId}", reservationId)
+                        .with(cvCoverLetter("user-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMMITTED"))
+                .andExpect(jsonPath("$.lastTransitionReason").value("COMMITTED"));
+
         mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(4)))
@@ -281,6 +296,7 @@ class PaymentControllerIntegrationTest {
         CreateReservationRequest reservationRequest = new CreateReservationRequest();
         reservationRequest.setFeature("CV_AND_COVER_LETTER_GENERATION");
         reservationRequest.setEstimatedTokens(10000);
+        reservationRequest.setOperationKey("controller-release");
 
         String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
                         .with(cvCoverLetter("user-123"))
@@ -320,6 +336,7 @@ class PaymentControllerIntegrationTest {
         CreateReservationRequest reservationRequest = new CreateReservationRequest();
         reservationRequest.setFeature("CV_AND_COVER_LETTER_GENERATION");
         reservationRequest.setEstimatedTokens(60000);
+        reservationRequest.setOperationKey("controller-insufficient");
 
         mockMvc.perform(post("/api/v1/payments/reservations")
                         .with(cvCoverLetter("user-123"))
@@ -390,6 +407,7 @@ class PaymentControllerIntegrationTest {
         CreateReservationRequest reservationRequest = new CreateReservationRequest();
         reservationRequest.setFeature("CV_AND_COVER_LETTER_GENERATION");
         reservationRequest.setEstimatedTokens(1000);
+        reservationRequest.setOperationKey("controller-cross-owner");
         String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
                         .with(cvCoverLetter("owner-123"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -404,6 +422,11 @@ class PaymentControllerIntegrationTest {
                         .with(cvCoverLetter("other-owner"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Reservation was not found"));
+
+        mockMvc.perform(get("/api/v1/payments/reservations/{reservationId}", reservationId)
+                        .with(cvCoverLetter("other-owner")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Reservation was not found"));
     }

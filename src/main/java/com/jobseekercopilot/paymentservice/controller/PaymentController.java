@@ -12,6 +12,7 @@ import com.jobseekercopilot.paymentservice.dto.PricingPlansResponse;
 import com.jobseekercopilot.paymentservice.dto.ReleaseReservationRequest;
 import com.jobseekercopilot.paymentservice.dto.ReleaseReservationResponse;
 import com.jobseekercopilot.paymentservice.dto.ReservationResponse;
+import com.jobseekercopilot.paymentservice.dto.ReservationStatusResponse;
 import com.jobseekercopilot.paymentservice.dto.TransactionsResponse;
 import com.jobseekercopilot.paymentservice.dto.WalletSummaryResponse;
 import com.jobseekercopilot.paymentservice.security.PaymentIdentityFilter;
@@ -131,6 +132,19 @@ public class PaymentController {
             @RequestAttribute(PaymentIdentityFilter.OWNER_ATTRIBUTE) String owner,
             @Valid @RequestBody CreateReservationRequest request) {
         return ResponseEntity.ok(paymentService.createReservation(owner, request));
+    }
+
+    @GetMapping("/reservations/{reservationId}")
+    @Operation(
+            summary = "Get owner-scoped reservation lifecycle and recovery evidence",
+            parameters = @Parameter(
+                    in = ParameterIn.HEADER,
+                    name = PaymentIdentityFilter.OWNER_HEADER,
+                    required = true))
+    public ResponseEntity<ReservationStatusResponse> reservationStatus(
+            @RequestAttribute(PaymentIdentityFilter.OWNER_ATTRIBUTE) String owner,
+            @PathVariable UUID reservationId) {
+        return ResponseEntity.ok(paymentService.reservationStatus(owner, reservationId));
     }
 
     @PostMapping("/reservations/{reservationId}/commit")

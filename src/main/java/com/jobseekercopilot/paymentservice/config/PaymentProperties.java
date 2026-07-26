@@ -1,5 +1,6 @@
 package com.jobseekercopilot.paymentservice.config;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -16,6 +17,7 @@ public class PaymentProperties {
     private List<PricingPlan> pricingPlans = new ArrayList<>();
     private Database database = new Database();
     private Ledger ledger = new Ledger();
+    private ReservationRecovery reservationRecovery = new ReservationRecovery();
 
     public List<PricingPlan> activePricingPlans() {
         return pricingPlans.stream()
@@ -38,6 +40,14 @@ public class PaymentProperties {
     @Data
     public static class Ledger {
         private boolean verifyOnStartup = true;
+    }
+
+    @Data
+    public static class ReservationRecovery {
+        private boolean enabled = true;
+        private Duration ttl = Duration.ofMinutes(15);
+        private Duration interval = Duration.ofSeconds(30);
+        private int batchSize = 100;
     }
 
     @Data

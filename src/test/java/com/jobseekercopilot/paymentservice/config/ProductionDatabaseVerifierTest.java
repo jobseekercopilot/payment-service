@@ -78,6 +78,21 @@ class ProductionDatabaseVerifierTest {
     }
 
     @Test
+    void rejectsDisabledExpiredReservationRecovery() {
+        MockEnvironment environment = validEnvironment()
+                .withProperty(
+                        "spring.datasource.url",
+                        "jdbc:postgresql://database.example/payment?sslmode=verify-full");
+        PaymentProperties properties = new PaymentProperties();
+        properties.getReservationRecovery().setEnabled(false);
+
+        assertThatThrownBy(() -> new ProductionDatabaseVerifier(properties, environment)
+                        .run(NO_ARGUMENTS))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Expired reservation recovery");
+    }
+
+    @Test
     void acceptsPostgresWithVerifiedTlsAndMigrationOnlySchemaManagement() {
         MockEnvironment environment = validEnvironment()
                 .withProperty(

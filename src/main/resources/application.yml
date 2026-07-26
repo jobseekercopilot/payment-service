@@ -29,6 +29,11 @@ payment:
     production-safety-check: true
   ledger:
     verify-on-startup: ${PAYMENT_LEDGER_VERIFY_ON_STARTUP:true}
+  reservation-recovery:
+    enabled: ${PAYMENT_RESERVATION_RECOVERY_ENABLED:true}
+    ttl: ${PAYMENT_RESERVATION_TTL:PT15M}
+    interval: ${PAYMENT_RESERVATION_RECOVERY_INTERVAL:PT30S}
+    batch-size: ${PAYMENT_RESERVATION_RECOVERY_BATCH_SIZE:100}
   security:
     payment-gateway-token: ${PAYMENT_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
     cv-cover-letter-token: ${CV_COVER_LETTER_TO_PAYMENT_SERVICE_TOKEN:}

@@ -39,6 +39,9 @@ public class AiTokenReservation {
     @Column(nullable = false, length = 128)
     private String feature;
 
+    @Column(nullable = false, length = 200)
+    private String operationKey;
+
     @Column(nullable = false)
     private long reservedTokens;
 
@@ -65,14 +68,37 @@ public class AiTokenReservation {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(nullable = false)
+    private Instant expiresAt;
+
     private Instant committedAt;
 
     private Instant releasedAt;
+
+    @Column(nullable = false)
+    private Instant lastTransitionAt;
+
+    @Column(nullable = false, length = 128)
+    private String lastTransitionReason;
+
+    @Column(nullable = false)
+    private int reconciliationAttempts;
+
+    private Instant lastReconciliationAttemptAt;
+
+    @Column(length = 128)
+    private String reconciliationErrorCode;
 
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
             createdAt = Instant.now();
+        }
+        if (lastTransitionAt == null) {
+            lastTransitionAt = createdAt;
+        }
+        if (lastTransitionReason == null) {
+            lastTransitionReason = "CREATED";
         }
     }
 }

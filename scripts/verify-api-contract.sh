@@ -21,7 +21,7 @@ done
 jq -e '
     . as $root |
     (.openapi | type == "string" and startswith("3.")) and
-    (.info.version == "2.0.0") and
+    (.info.version == "3.0.0") and
     (.components.securitySchemes.serviceToken
         | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
     (.paths["/api/v1/payments/wallet"].get.operationId == "wallet") and
@@ -29,6 +29,7 @@ jq -e '
     (.paths["/api/v1/payments/pricing"].get.operationId == "pricing") and
     (.paths["/api/v1/payments/confirm-stripe-purchase"].post.operationId == "confirmStripePurchase") and
     (.paths["/api/v1/payments/reservations"].post.operationId == "createReservation") and
+    (.paths["/api/v1/payments/reservations/{reservationId}"].get.operationId == "reservationStatus") and
     (.paths["/api/v1/payments/reservations/{reservationId}/commit"].post.operationId == "commitReservation") and
     (.paths["/api/v1/payments/reservations/{reservationId}/release"].post.operationId == "releaseReservation") and
     ([
@@ -37,11 +38,14 @@ jq -e '
         "/api/v1/payments/demo-purchase",
         "/api/v1/payments/estimate",
         "/api/v1/payments/reservations",
+        "/api/v1/payments/reservations/{reservationId}",
         "/api/v1/payments/reservations/{reservationId}/commit",
         "/api/v1/payments/reservations/{reservationId}/release",
         "/api/v1/payments/confirm-stripe-purchase"
       ] | all(. as $path |
-        ((if $path == "/api/v1/payments/wallet" or $path == "/api/v1/payments/transactions"
+        ((if $path == "/api/v1/payments/wallet"
+              or $path == "/api/v1/payments/transactions"
+              or $path == "/api/v1/payments/reservations/{reservationId}"
               then $root.paths[$path].get
               else $root.paths[$path].post end)) as $operation |
         ($operation.security == [{"serviceToken": []}]) and
@@ -53,9 +57,18 @@ jq -e '
     (.components.schemas.ConfirmStripePurchaseRequest.required
         | index("userId") != null and index("pricingPlanId") != null and index("stripeSessionId") != null) and
     (.components.schemas.CreateReservationRequest.properties.estimatedTokens.minimum == 1) and
+    (.components.schemas.CreateReservationRequest.required
+        | index("operationKey") != null) and
+    (.components.schemas.CreateReservationRequest.properties.operationKey.maxLength == 200) and
     (.components.schemas.CommitReservationRequest.properties.actualTokens.minimum == 0) and
     (.components.schemas.ReservationResponse.properties.status.enum
         == ["RESERVED", "COMMITTED", "RELEASED", "FAILED"]) and
+    (.components.schemas.ReservationResponse.properties
+        | has("operationKey") and has("expiresAt")) and
+    (.components.schemas.ReservationStatusResponse.properties
+        | has("operationKey") and has("expiresAt") and has("lastTransitionAt") and
+          has("lastTransitionReason") and has("reconciliationAttempts") and
+          has("lastReconciliationAttemptAt") and has("reconciliationErrorCode")) and
     (.components.schemas.WalletSummaryResponse.properties
         | has("userId") and has("balanceTokens") and has("lifetimePurchasedTokens") and
           has("lifetimeSpentTokens") and has("lifetimeRefundedTokens") and has("freeTrialGranted")) and
