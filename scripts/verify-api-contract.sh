@@ -58,7 +58,11 @@ jq -e '
         == ["RESERVED", "COMMITTED", "RELEASED", "FAILED"]) and
     (.components.schemas.WalletSummaryResponse.properties
         | has("userId") and has("balanceTokens") and has("lifetimePurchasedTokens") and
-          has("lifetimeSpentTokens") and has("lifetimeRefundedTokens") and has("freeTrialGranted"))
+          has("lifetimeSpentTokens") and has("lifetimeRefundedTokens") and has("freeTrialGranted")) and
+    (.components.schemas.TransactionResponse.properties
+        | has("balanceDeltaTokens") and has("operationId")) and
+    (.components.schemas.AiTokenTransaction.properties
+        | has("sequenceNumber") and has("balanceDeltaTokens") and has("operationId"))
 ' "$contract" >/dev/null
 
 if [[ -n "$generated" ]]; then

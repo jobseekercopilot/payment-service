@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: ${PAYMENT_LOCAL_DATABASE_URL:jdbc:postgresql://localhost:5432/payment_local}
+    driver-class-name: org.postgresql.Driver
+    username: ${PAYMENT_LOCAL_DATABASE_USERNAME:payment_local}
+    password: ${PAYMENT_LOCAL_DATABASE_PASSWORD:payment_local}
+  flyway:
+    locations:
+      - classpath:db/migration/common
+
+environment-data:
+  isolated-database: true
+  allowed-environments:
+    - local
+    - test
+    - demo
+
+payment:
+  database:
+    production-safety-check: false

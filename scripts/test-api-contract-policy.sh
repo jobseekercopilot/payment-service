@@ -78,4 +78,15 @@ if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/service-ide
     exit 1
 fi
 
+copy_contract "$temporary_dir/ledger-delta"
+jq 'del(.components.schemas.TransactionResponse.properties.balanceDeltaTokens)' \
+    "$temporary_dir/ledger-delta/openapi.json" \
+    > "$temporary_dir/ledger-delta/changed.json"
+mv "$temporary_dir/ledger-delta/changed.json" "$temporary_dir/ledger-delta/openapi.json"
+(cd "$temporary_dir/ledger-delta" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/ledger-delta/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of the signed ledger delta" >&2
+    exit 1
+fi
+
 echo "API contract policy negative tests passed"

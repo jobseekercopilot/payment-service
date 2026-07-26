@@ -14,6 +14,8 @@ import org.springframework.context.annotation.Configuration;
 public class PaymentProperties {
     private long freeStarterTokens = 20000;
     private List<PricingPlan> pricingPlans = new ArrayList<>();
+    private Database database = new Database();
+    private Ledger ledger = new Ledger();
 
     public List<PricingPlan> activePricingPlans() {
         return pricingPlans.stream()
@@ -26,6 +28,16 @@ public class PaymentProperties {
         return activePricingPlans().stream()
                 .filter(plan -> plan.getId().equals(id))
                 .findFirst();
+    }
+
+    @Data
+    public static class Database {
+        private boolean productionSafetyCheck = true;
+    }
+
+    @Data
+    public static class Ledger {
+        private boolean verifyOnStartup = true;
     }
 
     @Data
