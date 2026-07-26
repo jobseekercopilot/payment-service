@@ -16,9 +16,9 @@ mvn -B clean verify
 ```
 
 Production requires PostgreSQL 15, verified TLS, reviewed Flyway migrations and
-startup reconciliation. H2 is test-only. Ledger concurrency, Stripe confirmation
-and the remaining operational controls are still not suitable for payment
-traffic.
+startup reconciliation. H2 is test-only. Wallet and reservation concurrency are
+database-controlled, but Stripe fulfillment, reservation expiry/compensation and
+the remaining operational controls are still not suitable for payment traffic.
 
 See [`docs/AI_CREDIT_LEDGER.md`](docs/AI_CREDIT_LEDGER.md) for the schema,
 signed-entry semantics and correction rules. See

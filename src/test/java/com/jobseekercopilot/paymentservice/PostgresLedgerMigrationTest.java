@@ -37,7 +37,7 @@ class PostgresLedgerMigrationTest {
                         "classpath:db/migration/common",
                         "classpath:db/migration/postgresql-live")
                 .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
         flyway.validate();
 
         UUID walletId = UUID.randomUUID();

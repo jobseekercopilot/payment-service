@@ -12,6 +12,8 @@ Live modes use PostgreSQL 15 through reviewed Flyway migrations:
   reservations, constraints and indexes.
 - `V2__make_ledger_entries_append_only.sql` installs the PostgreSQL trigger that
   rejects ledger `UPDATE` and `DELETE` operations with SQL state `55000`.
+- `V3__add_concurrency_versions.sql` adds optimistic versions to wallets and
+  reservations as a second line of defence against stale writes.
 
 Hibernate validates the migrated schema and must not create or alter it. H2 and
 the common migration are limited to focused automated tests. The `local` profile
@@ -59,8 +61,28 @@ individual balance effects.
 
 Wallet mutation and entry insertion occur in the same Spring transaction.
 Database uniqueness on `(wallet_id, operation_id, transaction_type)` prevents
-duplicate entries for the same typed operation. PAY-09 retains the broader
-concurrency and idempotency work.
+duplicate entries for the same typed operation.
+
+## Concurrency and retries
+
+Every wallet balance mutation obtains a pessimistic database row lock before
+reading its starting balance. Reservation terminal transitions always lock the
+reservation first and its wallet second; callers must preserve that order to
+avoid lock cycles.
+
+First-use wallet provisioning completes in an independent transaction before
+the caller opens its ledger transaction. This avoids nested transactions
+starving the database connection pool. The wallet unique constraint elects one
+winner during a multi-instance race, and the starter grant is committed
+atomically with that wallet. Losing requests reload the committed winner instead
+of granting starter credit again.
+
+Reservation commit and release transitions are mutually exclusive. Repeating
+an identical successful commit or release returns the existing outcome without
+changing the wallet or ledger. A different commit amount or an attempt to cross
+from `COMMITTED` to `RELEASED` (or vice versa) is rejected. Reservation expiry
+and compensation remain owned by PAY-10; provider fulfilment and webhook
+idempotency remain owned by PAY-07.
 
 ## Reconciliation and correction
 
