@@ -9,7 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,13 +27,13 @@ public class AiTokenReservation {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 128)
     private String userId;
 
     @Column(nullable = false)
     private UUID walletId;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 128)
     private String feature;
 
     @Column(nullable = false)
@@ -47,21 +47,23 @@ public class AiTokenReservation {
     @Column(nullable = false)
     private ReservationStatus status;
 
+    @Column(length = 64)
     private String referenceType;
 
+    @Column(length = 255)
     private String referenceId;
 
     @Column(nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
-    private LocalDateTime committedAt;
+    private Instant committedAt;
 
-    private LocalDateTime releasedAt;
+    private Instant releasedAt;
 
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now();
+            createdAt = Instant.now();
         }
     }
 }

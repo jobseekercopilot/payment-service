@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -66,7 +67,11 @@ class PaymentControllerIntegrationTest {
         mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(1)))
-                .andExpect(jsonPath("$.transactions[0].transactionType").value("FREE_TRIAL_GRANTED"));
+                .andExpect(jsonPath("$.transactions[0].transactionType").value("FREE_TRIAL_GRANTED"))
+                .andExpect(jsonPath("$.transactions[0].balanceDeltaTokens").value(20000))
+                .andExpect(jsonPath("$.transactions[0].balanceBefore").value(0))
+                .andExpect(jsonPath("$.transactions[0].balanceAfter").value(20000))
+                .andExpect(jsonPath("$.transactions[0].operationId", startsWith("FREE_TRIAL:")));
     }
 
     @Test
@@ -101,7 +106,9 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(120000))
                 .andExpect(jsonPath("$.wallet.lifetimePurchasedTokens").value(100000))
                 .andExpect(jsonPath("$.transaction.transactionType").value("DEMO_PURCHASE"))
-                .andExpect(jsonPath("$.transaction.tokenAmount").value(100000));
+                .andExpect(jsonPath("$.transaction.tokenAmount").value(100000))
+                .andExpect(jsonPath("$.transaction.balanceDeltaTokens").value(100000))
+                .andExpect(jsonPath("$.transaction.operationId", startsWith("DEMO_PURCHASE:")));
 
         mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
@@ -127,6 +134,8 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(120000))
                 .andExpect(jsonPath("$.wallet.lifetimePurchasedTokens").value(100000))
                 .andExpect(jsonPath("$.transaction.transactionType").value("PURCHASE"))
+                .andExpect(jsonPath("$.transaction.balanceDeltaTokens").value(100000))
+                .andExpect(jsonPath("$.transaction.operationId").value("STRIPE_CHECKOUT_SESSION:cs_test_123"))
                 .andExpect(jsonPath("$.transaction.referenceType").value("STRIPE_CHECKOUT_SESSION"))
                 .andExpect(jsonPath("$.transaction.referenceId").value("cs_test_123"));
     }
@@ -251,8 +260,11 @@ class PaymentControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(4)))
                 .andExpect(jsonPath("$.transactions[0].transactionType").value("RESERVATION_RELEASED"))
+                .andExpect(jsonPath("$.transactions[0].balanceDeltaTokens").value(2700))
                 .andExpect(jsonPath("$.transactions[1].transactionType").value("SPEND"))
+                .andExpect(jsonPath("$.transactions[1].balanceDeltaTokens").value(0))
                 .andExpect(jsonPath("$.transactions[2].transactionType").value("RESERVATION"))
+                .andExpect(jsonPath("$.transactions[2].balanceDeltaTokens").value(-10000))
                 .andExpect(jsonPath("$.transactions[3].transactionType").value("FREE_TRIAL_GRANTED"));
     }
 

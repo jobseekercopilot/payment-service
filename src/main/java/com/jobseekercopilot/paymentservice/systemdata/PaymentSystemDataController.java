@@ -1,8 +1,11 @@
 package com.jobseekercopilot.paymentservice.systemdata;
 
+import com.jobseekercopilot.paymentservice.entity.AiTokenReservation;
+import com.jobseekercopilot.paymentservice.entity.AiTokenTransaction;
 import com.jobseekercopilot.paymentservice.repository.AiTokenReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
+import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -23,24 +26,41 @@ public class PaymentSystemDataController {
     private final AiTokenWalletRepository walletRepository;
     private final AiTokenTransactionRepository transactionRepository;
     private final AiTokenReservationRepository reservationRepository;
+    private final FixtureLedgerSeedValidator fixtureLedgerSeedValidator;
+    private final LedgerReconciliationService reconciliationService;
 
     public PaymentSystemDataController(
             EnvironmentDataGuard guard,
             AiTokenWalletRepository walletRepository,
             AiTokenTransactionRepository transactionRepository,
-            AiTokenReservationRepository reservationRepository) {
+            AiTokenReservationRepository reservationRepository,
+            FixtureLedgerSeedValidator fixtureLedgerSeedValidator,
+            LedgerReconciliationService reconciliationService) {
         this.guard = guard;
         this.walletRepository = walletRepository;
         this.transactionRepository = transactionRepository;
         this.reservationRepository = reservationRepository;
+        this.fixtureLedgerSeedValidator = fixtureLedgerSeedValidator;
+        this.reconciliationService = reconciliationService;
     }
 
+    @Transactional
     @PostMapping("/seed/payments")
     public ResponseEntity<SystemDataResult> seedPayments(@RequestBody SystemDataPaymentSeedRequest request) {
         guard.requireEnabled();
-        var wallet = walletRepository.save(request.wallet());
-        var transactions = transactionRepository.saveAll(request.transactions() == null ? List.of() : request.transactions());
-        var reservations = reservationRepository.saveAll(request.reservations() == null ? List.of() : request.reservations());
+        fixtureLedgerSeedValidator.validate(request);
+        var wallet = walletRepository.saveAndFlush(request.wallet());
+        var transactionsToSave =
+                request.transactions() == null ? List.<AiTokenTransaction>of() : request.transactions();
+        transactionsToSave.forEach(transaction -> transaction.setWalletId(wallet.getId()));
+        var reservationsToSave =
+                request.reservations() == null ? List.<AiTokenReservation>of() : request.reservations();
+        reservationsToSave.forEach(reservation -> reservation.setWalletId(wallet.getId()));
+        var transactions = transactionRepository.saveAllAndFlush(transactionsToSave);
+        var reservations = reservationRepository.saveAllAndFlush(reservationsToSave);
+        if (!reconciliationService.reconcile(wallet.getId()).reconciled()) {
+            throw new IllegalStateException("Isolated payment fixture failed ledger reconciliation");
+        }
         return ResponseEntity.ok(SystemDataResult.success("SEED", 1 + transactions.size() + reservations.size(), guard.activeEnvironment(), Map.of(
                 "userId", wallet.getUserId(),
                 "balanceTokens", wallet.getBalanceTokens(),

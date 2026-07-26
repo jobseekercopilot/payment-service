@@ -25,7 +25,7 @@ import com.jobseekercopilot.paymentservice.exception.InsufficientTokensException
 import com.jobseekercopilot.paymentservice.repository.AiTokenReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -55,7 +55,8 @@ public class PaymentService {
         int boundedLimit = Math.max(1, Math.min(limit, 100));
         return TransactionsResponse.builder()
                 .userId(userId)
-                .transactions(transactionRepository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, boundedLimit))
+                .transactions(transactionRepository.findByUserIdOrderBySequenceNumberDesc(
+                                userId, PageRequest.of(0, boundedLimit))
                         .stream()
                         .map(this::mapTransaction)
                         .toList())
@@ -77,9 +78,10 @@ public class PaymentService {
                 .orElseThrow(() -> new BadRequestException("Unknown or inactive pricing plan: " + pricingPlanId));
         AiTokenWallet wallet = getOrCreateWallet(userId);
         long before = wallet.getBalanceTokens();
-        long after = before + plan.getTokenAmount();
+        long after = checkedAdd(before, plan.getTokenAmount());
         wallet.setBalanceTokens(after);
-        wallet.setLifetimePurchasedTokens(wallet.getLifetimePurchasedTokens() + plan.getTokenAmount());
+        wallet.setLifetimePurchasedTokens(
+                checkedAdd(wallet.getLifetimePurchasedTokens(), plan.getTokenAmount()));
         AiTokenWallet savedWallet = walletRepository.save(wallet);
         AiTokenTransaction transaction = transactionRepository.save(transaction(
                 savedWallet,
@@ -87,6 +89,7 @@ public class PaymentService {
                 plan.getTokenAmount(),
                 before,
                 after,
+                "DEMO_PURCHASE:" + UUID.randomUUID(),
                 "Demo AI Credit purchase: " + plan.getName(),
                 "PRICING_PLAN",
                 plan.getId()));
@@ -141,7 +144,8 @@ public class PaymentService {
     @Transactional
     public EstimateResponse estimate(String userId, EstimateRequest request) {
         AiTokenWallet wallet = getOrCreateWallet(userId);
-        long total = request.getEstimatedInputTokens() + request.getEstimatedOutputTokens();
+        long total = checkedAdd(
+                request.getEstimatedInputTokens(), request.getEstimatedOutputTokens());
         return EstimateResponse.builder()
                 .feature(request.getFeature())
                 .estimatedTotalTokens(total)
@@ -184,6 +188,7 @@ public class PaymentService {
                 request.getEstimatedTokens(),
                 before,
                 after,
+                "RESERVATION:" + reservation.getId(),
                 "AI Credit reservation for " + request.getFeature(),
                 request.getReferenceType(),
                 request.getReferenceId()));
@@ -216,39 +221,36 @@ public class PaymentService {
             throw new BadRequestException("Reservation is not in RESERVED status");
         }
         long actualTokens = Math.max(0, request.getActualTokens());
-        if (actualTokens > reservation.getReservedTokens()) {
-            long extraTokens = actualTokens - reservation.getReservedTokens();
-            AiTokenWallet wallet = walletRepository.findById(reservation.getWalletId())
-                    .orElseThrow(() -> new BadRequestException("Reservation wallet was not found"));
-            if (wallet.getBalanceTokens() < extraTokens) {
-                log.warn("Reservation commit exceeded balance userId={} reservationId={} actualTokens={} reservedTokens={} balanceTokens={}",
-                        userId,
-                        reservationId,
-                        actualTokens,
-                        reservation.getReservedTokens(),
-                        wallet.getBalanceTokens());
-                throw new BadRequestException("Actual token usage exceeded reservation and available balance");
-            }
-            wallet.setBalanceTokens(wallet.getBalanceTokens() - extraTokens);
-            walletRepository.save(wallet);
-        }
-
+        long extraTokens = Math.max(0, actualTokens - reservation.getReservedTokens());
         long releasedTokens = Math.max(0, reservation.getReservedTokens() - actualTokens);
         AiTokenWallet wallet = walletRepository.findById(reservation.getWalletId())
                 .orElseThrow(() -> new BadRequestException("Reservation wallet was not found"));
-        long releaseBefore = wallet.getBalanceTokens();
-        if (releasedTokens > 0) {
-            wallet.setBalanceTokens(releaseBefore + releasedTokens);
+        long balanceBeforeCommit = wallet.getBalanceTokens();
+        if (balanceBeforeCommit < extraTokens) {
+            log.warn("Reservation commit exceeded balance userId={} reservationId={} actualTokens={} reservedTokens={} balanceTokens={}",
+                    userId,
+                    reservationId,
+                    actualTokens,
+                    reservation.getReservedTokens(),
+                    balanceBeforeCommit);
+            throw new BadRequestException("Actual token usage exceeded reservation and available balance");
         }
-        wallet.setLifetimeSpentTokens(wallet.getLifetimeSpentTokens() + actualTokens);
+
+        long balanceAfterSpend = balanceBeforeCommit - extraTokens;
+        long balanceAfterRelease = checkedAdd(balanceAfterSpend, releasedTokens);
+        wallet.setBalanceTokens(balanceAfterRelease);
+        wallet.setLifetimeSpentTokens(
+                checkedAdd(wallet.getLifetimeSpentTokens(), actualTokens));
         AiTokenWallet savedWallet = walletRepository.save(wallet);
 
+        String operationId = "RESERVATION_COMMIT:" + reservationId;
         AiTokenTransaction spendTransaction = transactionRepository.save(transaction(
                 savedWallet,
                 TransactionType.SPEND,
                 actualTokens,
-                releaseBefore,
-                releaseBefore,
+                balanceBeforeCommit,
+                balanceAfterSpend,
+                operationId,
                 descriptionOrDefault(request.getDescription()),
                 reservation.getReferenceType(),
                 reservation.getReferenceId()));
@@ -257,8 +259,9 @@ public class PaymentService {
                     savedWallet,
                     TransactionType.RESERVATION_RELEASED,
                     releasedTokens,
-                    releaseBefore,
-                    savedWallet.getBalanceTokens(),
+                    balanceAfterSpend,
+                    balanceAfterRelease,
+                    operationId,
                     "Released unused reserved AI Credit",
                     reservation.getReferenceType(),
                     reservation.getReferenceId()));
@@ -267,7 +270,7 @@ public class PaymentService {
         reservation.setCommittedTokens(actualTokens);
         reservation.setReleasedTokens(releasedTokens);
         reservation.setStatus(ReservationStatus.COMMITTED);
-        reservation.setCommittedAt(LocalDateTime.now());
+        reservation.setCommittedAt(Instant.now());
         reservationRepository.save(reservation);
         log.info("AI token reservation committed userId={} reservationId={} spendTransactionId={} actualTokens={} releasedTokens={} balanceAfter={}",
                 userId,
@@ -297,7 +300,7 @@ public class PaymentService {
                 .orElseThrow(() -> new BadRequestException("Reservation wallet was not found"));
         long before = wallet.getBalanceTokens();
         long releasedTokens = reservation.getReservedTokens();
-        wallet.setBalanceTokens(before + releasedTokens);
+        wallet.setBalanceTokens(checkedAdd(before, releasedTokens));
         AiTokenWallet savedWallet = walletRepository.save(wallet);
         AiTokenTransaction transaction = transactionRepository.save(transaction(
                 savedWallet,
@@ -305,13 +308,14 @@ public class PaymentService {
                 releasedTokens,
                 before,
                 savedWallet.getBalanceTokens(),
+                "RESERVATION_RELEASE:" + reservationId,
                 reason == null || reason.isBlank() ? "Released AI Credit reservation" : reason,
                 reservation.getReferenceType(),
                 reservation.getReferenceId()));
 
         reservation.setReleasedTokens(releasedTokens);
         reservation.setStatus(ReservationStatus.RELEASED);
-        reservation.setReleasedAt(LocalDateTime.now());
+        reservation.setReleasedAt(Instant.now());
         reservationRepository.save(reservation);
         log.info("AI token reservation released userId={} reservationId={} transactionId={} releasedTokens={} balanceBefore={} balanceAfter={} reason={} durationMs={}",
                 userId,
@@ -352,6 +356,7 @@ public class PaymentService {
                 freeTokens,
                 0,
                 freeTokens,
+                "FREE_TRIAL:" + saved.getId(),
                 "Free starter AI Credit granted",
                 null,
                 null));
@@ -370,12 +375,13 @@ public class PaymentService {
 
     private DemoPurchaseResponse recordStripePurchase(
             AiTokenWallet wallet,
-            PaymentProperties.PricingPlan plan,
+        PaymentProperties.PricingPlan plan,
             ConfirmStripePurchaseRequest request) {
         long before = wallet.getBalanceTokens();
-        long after = before + plan.getTokenAmount();
+        long after = checkedAdd(before, plan.getTokenAmount());
         wallet.setBalanceTokens(after);
-        wallet.setLifetimePurchasedTokens(wallet.getLifetimePurchasedTokens() + plan.getTokenAmount());
+        wallet.setLifetimePurchasedTokens(
+                checkedAdd(wallet.getLifetimePurchasedTokens(), plan.getTokenAmount()));
         AiTokenWallet savedWallet = walletRepository.save(wallet);
         AiTokenTransaction transaction = transactionRepository.save(transaction(
                 savedWallet,
@@ -383,6 +389,7 @@ public class PaymentService {
                 plan.getTokenAmount(),
                 before,
                 after,
+                STRIPE_CHECKOUT_SESSION + ":" + request.getStripeSessionId(),
                 "Stripe AI Credit purchase: " + plan.getName(),
                 STRIPE_CHECKOUT_SESSION,
                 request.getStripeSessionId()));
@@ -412,20 +419,46 @@ public class PaymentService {
             long amount,
             long before,
             long after,
+            String operationId,
             String description,
             String referenceType,
             String referenceId) {
+        if (amount < 0
+                || before < 0
+                || after < 0
+                || operationId == null
+                || operationId.isBlank()
+                || operationId.length() > 255) {
+            throw new IllegalArgumentException("Invalid AI Credit ledger balance transition");
+        }
+        final long delta;
+        try {
+            delta = Math.subtractExact(after, before);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(
+                    "Invalid AI Credit ledger balance transition", exception);
+        }
         return AiTokenTransaction.builder()
                 .userId(wallet.getUserId())
                 .walletId(wallet.getId())
                 .transactionType(type)
                 .tokenAmount(amount)
+                .balanceDeltaTokens(delta)
                 .balanceBefore(before)
                 .balanceAfter(after)
+                .operationId(operationId)
                 .description(description)
                 .referenceType(referenceType)
                 .referenceId(referenceId)
                 .build();
+    }
+
+    private long checkedAdd(long left, long right) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new BadRequestException("AI Credit amount exceeds the supported range");
+        }
     }
 
     private WalletSummaryResponse mapWallet(AiTokenWallet wallet) {
@@ -444,8 +477,10 @@ public class PaymentService {
                 .id(transaction.getId())
                 .transactionType(transaction.getTransactionType())
                 .tokenAmount(transaction.getTokenAmount())
+                .balanceDeltaTokens(transaction.getBalanceDeltaTokens())
                 .balanceBefore(transaction.getBalanceBefore())
                 .balanceAfter(transaction.getBalanceAfter())
+                .operationId(transaction.getOperationId())
                 .description(transaction.getDescription())
                 .referenceType(transaction.getReferenceType())
                 .referenceId(transaction.getReferenceId())

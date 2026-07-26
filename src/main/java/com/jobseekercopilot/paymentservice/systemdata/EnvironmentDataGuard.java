@@ -34,7 +34,9 @@ public class EnvironmentDataGuard {
         Set<String> allowed = properties.getAllowedEnvironments().stream()
                 .map(profile -> profile.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
-        if (!properties.isEnabled() || activeProfiles.stream().noneMatch(allowed::contains)) {
+        if (!properties.isEnabled()
+                || !properties.isIsolatedDatabase()
+                || activeProfiles.stream().noneMatch(allowed::contains)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Environment data management is disabled");
         }
     }
