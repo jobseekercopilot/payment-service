@@ -256,6 +256,14 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.wallet.lifetimeSpentTokens").value(7300))
                 .andExpect(jsonPath("$.spendTransaction.transactionType").value("SPEND"));
 
+        mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/commit", reservationId)
+                        .with(cvCoverLetter("user-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(commitRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.committedTokens").value(7300))
+                .andExpect(jsonPath("$.wallet.balanceTokens").value(12700));
+
         mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(4)))
@@ -293,6 +301,18 @@ class PaymentControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.releasedTokens").value(10000))
                 .andExpect(jsonPath("$.wallet.balanceTokens").value(20000));
+
+        mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/release", reservationId)
+                        .with(cvCoverLetter("user-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(releaseRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.releasedTokens").value(10000))
+                .andExpect(jsonPath("$.wallet.balanceTokens").value(20000));
+
+        mockMvc.perform(get("/api/v1/payments/transactions").with(paymentGateway("user-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactions", hasSize(3)));
     }
 
     @Test

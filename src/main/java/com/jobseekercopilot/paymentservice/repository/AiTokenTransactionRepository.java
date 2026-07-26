@@ -30,4 +30,9 @@ public interface AiTokenTransactionRepository extends JpaRepository<AiTokenTrans
             TransactionType transactionType,
             String referenceType,
             String referenceId);
+
+    Optional<AiTokenTransaction> findByWalletIdAndOperationIdAndTransactionType(
+            UUID walletId,
+            String operationId,
+            TransactionType transactionType);
 }

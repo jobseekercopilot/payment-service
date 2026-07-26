@@ -1,5 +1,7 @@
 package com.jobseekercopilot.paymentservice.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -8,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
@@ -43,6 +46,12 @@ public class AiTokenWallet {
 
     @Column(nullable = false)
     private boolean freeTrialGranted;
+
+    @Version
+    @Column(nullable = false)
+    @JsonIgnore
+    @Schema(hidden = true)
+    private long version;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
