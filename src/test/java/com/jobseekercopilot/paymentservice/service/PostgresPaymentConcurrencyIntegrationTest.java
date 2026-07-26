@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -59,6 +60,8 @@ class PostgresPaymentConcurrencyIntegrationTest {
 
     @Autowired private PaymentService paymentService;
     @Autowired private LedgerReconciliationService reconciliationService;
+    @Autowired private ReservationRecoveryService reservationRecoveryService;
+    @Autowired private ReservationRecoveryFailureRecorder recoveryFailureRecorder;
     @Autowired private AiTokenWalletRepository walletRepository;
     @Autowired private AiTokenTransactionRepository transactionRepository;
     @Autowired private AiTokenReservationRepository reservationRepository;
@@ -111,6 +114,124 @@ class PostgresPaymentConcurrencyIntegrationTest {
                 .extracting(AiTokenTransaction::getBalanceDeltaTokens)
                 .containsExactly(20_000L, -10_000L, -10_000L);
         assertThat(reconciliationService.reconcile(wallet.getId()).reconciled()).isTrue();
+    }
+
+    @Test
+    void identicalConcurrentReservationCreatesReplayOneDurableHold() throws Exception {
+        String userId = uniqueUser("reservation-idempotency");
+        paymentService.wallet(userId);
+        CreateReservationRequest request = reservationRequest(
+                "lost-response-key", "same-request");
+        List<Callable<com.jobseekercopilot.paymentservice.dto.ReservationResponse>> calls =
+                List.of(
+                        () -> paymentService.createReservation(userId, request),
+                        () -> paymentService.createReservation(userId, request));
+
+        var responses = invokeTogether(calls);
+
+        assertThat(responses).extracting(
+                com.jobseekercopilot.paymentservice.dto.ReservationResponse::getReservationId)
+                .containsOnly(responses.get(0).getReservationId());
+        assertThat(responses).extracting(
+                com.jobseekercopilot.paymentservice.dto.ReservationResponse::getBalanceAfterReservation)
+                .containsOnly(10_000L);
+        AiTokenWallet wallet = walletRepository.findByUserId(userId).orElseThrow();
+        assertThat(wallet.getBalanceTokens()).isEqualTo(10_000);
+        assertThat(reservationRepository.findByUserId(userId)).hasSize(1);
+        assertThat(transactionRepository.findByWalletIdOrderBySequenceNumberAsc(wallet.getId()))
+                .extracting(AiTokenTransaction::getTransactionType)
+                .containsExactly(
+                        TransactionType.FREE_TRIAL_GRANTED,
+                        TransactionType.RESERVATION);
+
+        CreateReservationRequest conflict = reservationRequest(
+                "lost-response-key", "different-request");
+        assertThatThrownBy(() -> paymentService.createReservation(userId, conflict))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("Reservation operation key was already used with a different request");
+        assertThat(reconciliationService.reconcile(wallet.getId()).reconciled()).isTrue();
+    }
+
+    @Test
+    void expiredReservationIsReleasedWithDurableRecoveryEvidence() {
+        String userId = uniqueUser("expiry-recovery");
+        UUID reservationId = createReservation(userId);
+        AiTokenReservation reservation = reservationRepository.findById(reservationId).orElseThrow();
+        reservation.setExpiresAt(reservation.getCreatedAt());
+        reservationRepository.saveAndFlush(reservation);
+
+        int released = reservationRecoveryService.reconcileExpiredReservations(Instant.now());
+
+        assertThat(released).isEqualTo(1);
+        AiTokenReservation recovered =
+                reservationRepository.findById(reservationId).orElseThrow();
+        assertThat(recovered.getStatus()).isEqualTo(ReservationStatus.RELEASED);
+        assertThat(recovered.getLastTransitionReason()).isEqualTo("RELEASED_AFTER_EXPIRY");
+        assertThat(recovered.getReconciliationAttempts()).isEqualTo(1);
+        assertThat(recovered.getLastReconciliationAttemptAt()).isNotNull();
+        assertThat(recovered.getReconciliationErrorCode()).isNull();
+        AiTokenWallet wallet = walletRepository.findByUserId(userId).orElseThrow();
+        assertThat(wallet.getBalanceTokens()).isEqualTo(20_000);
+        assertThat(transactionRepository.findByWalletIdOrderBySequenceNumberAsc(wallet.getId()))
+                .extracting(AiTokenTransaction::getTransactionType)
+                .containsExactly(
+                        TransactionType.FREE_TRIAL_GRANTED,
+                        TransactionType.RESERVATION,
+                        TransactionType.RESERVATION_RELEASED);
+        assertThat(reconciliationService.reconcile(wallet.getId()).reconciled()).isTrue();
+    }
+
+    @Test
+    void expiredCommitAndRecoveryCannotProduceTwoTerminalOutcomes() throws Exception {
+        String userId = uniqueUser("expiry-race");
+        UUID reservationId = createReservation(userId);
+        AiTokenReservation reservation = reservationRepository.findById(reservationId).orElseThrow();
+        reservation.setExpiresAt(reservation.getCreatedAt());
+        reservationRepository.saveAndFlush(reservation);
+        List<Callable<Throwable>> calls = List.of(
+                commitAttempt(userId, reservationId, 7_300),
+                () -> {
+                    try {
+                        paymentService.reconcileExpiredReservation(
+                                reservationId, Instant.now());
+                        return null;
+                    } catch (Throwable error) {
+                        return error;
+                    }
+                });
+
+        List<Throwable> outcomes = invokeTogether(calls);
+
+        assertThat(outcomes).filteredOn(error -> error == null).hasSize(1);
+        assertThat(outcomes).filteredOn(BadRequestException.class::isInstance).hasSize(1);
+        AiTokenReservation recovered =
+                reservationRepository.findById(reservationId).orElseThrow();
+        assertThat(recovered.getStatus()).isEqualTo(ReservationStatus.RELEASED);
+        AiTokenWallet wallet = walletRepository.findByUserId(userId).orElseThrow();
+        assertThat(wallet.getBalanceTokens()).isEqualTo(20_000);
+        assertThat(transactionRepository.findByWalletIdOrderBySequenceNumberAsc(wallet.getId()))
+                .hasSize(3);
+        assertThat(reconciliationService.reconcile(wallet.getId()).reconciled()).isTrue();
+    }
+
+    @Test
+    void failedRecoveryAttemptLeavesHoldRetryableAndDurablyFlagged() {
+        String userId = uniqueUser("expiry-failure");
+        UUID reservationId = createReservation(userId);
+
+        recoveryFailureRecorder.record(
+                reservationId, new IllegalStateException("simulated recovery failure"));
+
+        AiTokenReservation flagged =
+                reservationRepository.findById(reservationId).orElseThrow();
+        assertThat(flagged.getStatus()).isEqualTo(ReservationStatus.RESERVED);
+        assertThat(flagged.getReconciliationAttempts()).isEqualTo(1);
+        assertThat(flagged.getLastReconciliationAttemptAt()).isNotNull();
+        assertThat(flagged.getReconciliationErrorCode())
+                .isEqualTo("IllegalStateException");
+        assertThat(walletRepository.findByUserId(userId).orElseThrow().getBalanceTokens())
+                .isEqualTo(10_000);
+        paymentService.releaseReservation(userId, reservationId, "test cleanup");
     }
 
     @Test
@@ -228,6 +349,7 @@ class PostgresPaymentConcurrencyIntegrationTest {
         CreateReservationRequest invalid = new CreateReservationRequest();
         invalid.setFeature("INVALID");
         invalid.setEstimatedTokens(0);
+        invalid.setOperationKey("invalid");
         assertThatThrownBy(() -> paymentService.createReservation(userId, invalid))
                 .isInstanceOf(BadRequestException.class);
 
@@ -260,6 +382,7 @@ class PostgresPaymentConcurrencyIntegrationTest {
                 CreateReservationRequest request = new CreateReservationRequest();
                 request.setFeature("CV_AND_COVER_LETTER_GENERATION");
                 request.setEstimatedTokens(10_000);
+                request.setOperationKey("concurrent-" + referenceId);
                 request.setReferenceType("CONCURRENCY_TEST");
                 request.setReferenceId(referenceId);
                 paymentService.createReservation(userId, request);
@@ -293,10 +416,20 @@ class PostgresPaymentConcurrencyIntegrationTest {
     }
 
     private UUID createReservation(String userId) {
+        CreateReservationRequest request = reservationRequest(
+                "reservation-" + UUID.randomUUID(), null);
+        return paymentService.createReservation(userId, request).getReservationId();
+    }
+
+    private CreateReservationRequest reservationRequest(
+            String operationKey, String referenceId) {
         CreateReservationRequest request = new CreateReservationRequest();
         request.setFeature("CV_AND_COVER_LETTER_GENERATION");
         request.setEstimatedTokens(10_000);
-        return paymentService.createReservation(userId, request).getReservationId();
+        request.setOperationKey(operationKey);
+        request.setReferenceType(referenceId == null ? null : "CONCURRENCY_TEST");
+        request.setReferenceId(referenceId);
+        return request;
     }
 
     private CommitReservationRequest commitRequest(long actualTokens) {

@@ -17,13 +17,16 @@ mvn -B clean verify
 
 Production requires PostgreSQL 15, verified TLS, reviewed Flyway migrations and
 startup reconciliation. H2 is test-only. Wallet and reservation concurrency are
-database-controlled, but Stripe fulfillment, reservation expiry/compensation and
-the remaining operational controls are still not suitable for payment traffic.
+database-controlled; abandoned holds expire and are reconciled with durable
+evidence. Stripe fulfillment and the remaining operational controls are still
+not suitable for payment traffic.
 
 See [`docs/AI_CREDIT_LEDGER.md`](docs/AI_CREDIT_LEDGER.md) for the schema,
 signed-entry semantics and correction rules. See
 [`docs/DATABASE_OPERATIONS.md`](docs/DATABASE_OPERATIONS.md) for the database,
 migration, backup and restore baseline.
+See [`docs/RESERVATION_RECOVERY.md`](docs/RESERVATION_RECOVERY.md) for operation
+keys, expiry, state transitions, consumer retries and the recovery runbook.
 
 The producer-owned OpenAPI contract is in `contracts/openapi.json`. Its
 checksum, compatibility policy and generated-contract equality are verified by:

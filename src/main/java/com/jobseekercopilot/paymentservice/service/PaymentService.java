@@ -11,6 +11,7 @@ import com.jobseekercopilot.paymentservice.dto.EstimateResponse;
 import com.jobseekercopilot.paymentservice.dto.PricingPlansResponse;
 import com.jobseekercopilot.paymentservice.dto.ReleaseReservationResponse;
 import com.jobseekercopilot.paymentservice.dto.ReservationResponse;
+import com.jobseekercopilot.paymentservice.dto.ReservationStatusResponse;
 import com.jobseekercopilot.paymentservice.dto.TokenPricingPlanResponse;
 import com.jobseekercopilot.paymentservice.dto.TransactionResponse;
 import com.jobseekercopilot.paymentservice.dto.TransactionsResponse;
@@ -171,9 +172,16 @@ public class PaymentService {
         if (request.getEstimatedTokens() <= 0) {
             throw new BadRequestException("Reservation token estimate must be positive");
         }
+        String operationKey = normalizeOperationKey(request.getOperationKey());
         walletProvisioner.ensureWallet(userId);
         return ledgerTransactionExecutor.execute(() -> {
             AiTokenWallet wallet = loadWalletForUpdate(userId);
+            AiTokenReservation existing = reservationRepository
+                    .findByUserIdAndOperationKey(userId, operationKey)
+                    .orElse(null);
+            if (existing != null) {
+                return replayCreatedReservation(wallet, existing, request);
+            }
             if (wallet.getBalanceTokens() < request.getEstimatedTokens()) {
                 log.warn("Insufficient AI token balance userId={} feature={} requestedTokens={} balanceTokens={}",
                         userId,
@@ -192,10 +200,14 @@ public class PaymentService {
                     .userId(userId)
                     .walletId(savedWallet.getId())
                     .feature(request.getFeature())
+                    .operationKey(operationKey)
                     .reservedTokens(request.getEstimatedTokens())
                     .status(ReservationStatus.RESERVED)
                     .referenceType(request.getReferenceType())
                     .referenceId(request.getReferenceId())
+                    .expiresAt(Instant.now().plus(paymentProperties.getReservationRecovery().getTtl()))
+                    .lastTransitionAt(Instant.now())
+                    .lastTransitionReason("CREATED")
                     .build());
             AiTokenTransaction transaction = transactionRepository.save(transaction(
                     savedWallet,
@@ -203,7 +215,7 @@ public class PaymentService {
                     request.getEstimatedTokens(),
                     before,
                     after,
-                    "RESERVATION:" + reservation.getId(),
+                    reservationCreateOperationId(operationKey),
                     "AI Credit reservation for " + request.getFeature(),
                     request.getReferenceType(),
                     request.getReferenceId()));
@@ -223,8 +235,17 @@ public class PaymentService {
                     .reservedTokens(reservation.getReservedTokens())
                     .balanceAfterReservation(after)
                     .status(reservation.getStatus())
+                    .operationKey(reservation.getOperationKey())
+                    .expiresAt(reservation.getExpiresAt())
                     .build();
         });
+    }
+
+    @Transactional(readOnly = true)
+    public ReservationStatusResponse reservationStatus(String userId, UUID reservationId) {
+        AiTokenReservation reservation = reservationRepository.findByIdAndUserId(reservationId, userId)
+                .orElseThrow(() -> new BadRequestException("Reservation was not found"));
+        return mapReservationStatus(reservation);
     }
 
     @Transactional
@@ -243,6 +264,9 @@ public class PaymentService {
         if (reservation.getStatus() != ReservationStatus.RESERVED) {
             throw new BadRequestException(
                     "Reservation cannot be committed from " + reservation.getStatus() + " status");
+        }
+        if (!reservation.getExpiresAt().isAfter(Instant.now())) {
+            throw new BadRequestException("Reservation has expired and is awaiting reconciliation");
         }
         long extraTokens = actualTokens > reservation.getReservedTokens()
                 ? checkedSubtract(actualTokens, reservation.getReservedTokens())
@@ -297,6 +321,9 @@ public class PaymentService {
         reservation.setReleasedTokens(releasedTokens);
         reservation.setStatus(ReservationStatus.COMMITTED);
         reservation.setCommittedAt(Instant.now());
+        reservation.setLastTransitionAt(reservation.getCommittedAt());
+        reservation.setLastTransitionReason("COMMITTED");
+        reservation.setReconciliationErrorCode(null);
         reservationRepository.save(reservation);
         log.info("AI token reservation committed userId={} reservationId={} spendTransactionId={} actualTokens={} releasedTokens={} balanceAfter={}",
                 userId,
@@ -326,6 +353,40 @@ public class PaymentService {
             throw new BadRequestException(
                     "Reservation cannot be released from " + reservation.getStatus() + " status");
         }
+        return releaseLockedReservation(
+                reservation,
+                reason,
+                "RELEASED_BY_CALLER",
+                false,
+                startedAt);
+    }
+
+    @Transactional
+    public boolean reconcileExpiredReservation(UUID reservationId, Instant reconciliationTime) {
+        AiTokenReservation reservation = reservationRepository.findByIdForUpdate(reservationId)
+                .orElse(null);
+        if (reservation == null
+                || reservation.getStatus() != ReservationStatus.RESERVED
+                || reservation.getExpiresAt().isAfter(reconciliationTime)) {
+            return false;
+        }
+        releaseLockedReservation(
+                reservation,
+                "Released expired AI Credit reservation",
+                "RELEASED_AFTER_EXPIRY",
+                true,
+                System.nanoTime());
+        return true;
+    }
+
+    private ReleaseReservationResponse releaseLockedReservation(
+            AiTokenReservation reservation,
+            String reason,
+            String transitionReason,
+            boolean reconciliation,
+            long startedAt) {
+        String userId = reservation.getUserId();
+        UUID reservationId = reservation.getId();
         AiTokenWallet wallet = loadWalletForUpdate(reservation.getWalletId());
         long before = wallet.getBalanceTokens();
         long releasedTokens = reservation.getReservedTokens();
@@ -345,6 +406,14 @@ public class PaymentService {
         reservation.setReleasedTokens(releasedTokens);
         reservation.setStatus(ReservationStatus.RELEASED);
         reservation.setReleasedAt(Instant.now());
+        reservation.setLastTransitionAt(reservation.getReleasedAt());
+        reservation.setLastTransitionReason(transitionReason);
+        reservation.setReconciliationErrorCode(null);
+        if (reconciliation) {
+            reservation.setReconciliationAttempts(
+                    Math.addExact(reservation.getReconciliationAttempts(), 1));
+            reservation.setLastReconciliationAttemptAt(reservation.getReleasedAt());
+        }
         reservationRepository.save(reservation);
         log.info("AI token reservation released userId={} reservationId={} transactionId={} releasedTokens={} balanceBefore={} balanceAfter={} reason={} durationMs={}",
                 userId,
@@ -361,6 +430,59 @@ public class PaymentService {
                 .releasedTokens(releasedTokens)
                 .wallet(mapWallet(savedWallet))
                 .build();
+    }
+
+    private ReservationResponse replayCreatedReservation(
+            AiTokenWallet wallet,
+            AiTokenReservation reservation,
+            CreateReservationRequest request) {
+        if (!reservation.getFeature().equals(request.getFeature())
+                || reservation.getReservedTokens() != request.getEstimatedTokens()
+                || !Objects.equals(reservation.getReferenceType(), request.getReferenceType())
+                || !Objects.equals(reservation.getReferenceId(), request.getReferenceId())) {
+            throw new BadRequestException(
+                    "Reservation operation key was already used with a different request");
+        }
+        AiTokenTransaction reservationTransaction = transactionRepository
+                .findByWalletIdAndOperationIdAndTransactionType(
+                        wallet.getId(),
+                        reservationCreateOperationId(reservation.getOperationKey()),
+                        TransactionType.RESERVATION)
+                .orElseGet(() -> transactionRepository
+                        .findByWalletIdAndOperationIdAndTransactionType(
+                                wallet.getId(),
+                                "RESERVATION:" + reservation.getId(),
+                                TransactionType.RESERVATION)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Reservation is missing its creation ledger entry")));
+        log.info("Duplicate reservation create returned without mutation userId={} reservationId={} status={}",
+                reservation.getUserId(),
+                reservation.getId(),
+                reservation.getStatus());
+        return ReservationResponse.builder()
+                .reservationId(reservation.getId())
+                .userId(reservation.getUserId())
+                .reservedTokens(reservation.getReservedTokens())
+                .balanceAfterReservation(reservationTransaction.getBalanceAfter())
+                .status(reservation.getStatus())
+                .operationKey(reservation.getOperationKey())
+                .expiresAt(reservation.getExpiresAt())
+                .build();
+    }
+
+    private String normalizeOperationKey(String operationKey) {
+        if (operationKey == null
+                || operationKey.isBlank()
+                || operationKey.trim().length() > 200
+                || !operationKey.trim().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,199}")) {
+            throw new BadRequestException(
+                    "Reservation operation key has an invalid format");
+        }
+        return operationKey.trim();
+    }
+
+    private String reservationCreateOperationId(String operationKey) {
+        return "RESERVATION_CREATE:" + operationKey;
     }
 
     private AiTokenWallet loadWallet(String userId) {
@@ -566,6 +688,30 @@ public class PaymentService {
                 .referenceType(transaction.getReferenceType())
                 .referenceId(transaction.getReferenceId())
                 .createdAt(transaction.getCreatedAt())
+                .build();
+    }
+
+    private ReservationStatusResponse mapReservationStatus(AiTokenReservation reservation) {
+        return ReservationStatusResponse.builder()
+                .reservationId(reservation.getId())
+                .userId(reservation.getUserId())
+                .operationKey(reservation.getOperationKey())
+                .feature(reservation.getFeature())
+                .reservedTokens(reservation.getReservedTokens())
+                .committedTokens(reservation.getCommittedTokens())
+                .releasedTokens(reservation.getReleasedTokens())
+                .status(reservation.getStatus())
+                .referenceType(reservation.getReferenceType())
+                .referenceId(reservation.getReferenceId())
+                .createdAt(reservation.getCreatedAt())
+                .expiresAt(reservation.getExpiresAt())
+                .committedAt(reservation.getCommittedAt())
+                .releasedAt(reservation.getReleasedAt())
+                .lastTransitionAt(reservation.getLastTransitionAt())
+                .lastTransitionReason(reservation.getLastTransitionReason())
+                .reconciliationAttempts(reservation.getReconciliationAttempts())
+                .lastReconciliationAttemptAt(reservation.getLastReconciliationAttemptAt())
+                .reconciliationErrorCode(reservation.getReconciliationErrorCode())
                 .build();
     }
 

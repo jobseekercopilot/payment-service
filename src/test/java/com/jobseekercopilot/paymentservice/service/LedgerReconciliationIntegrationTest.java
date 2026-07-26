@@ -39,6 +39,7 @@ class LedgerReconciliationIntegrationTest {
         CreateReservationRequest create = new CreateReservationRequest();
         create.setFeature("CV_AND_COVER_LETTER_GENERATION");
         create.setEstimatedTokens(10_000);
+        create.setOperationKey("ledger-reconciliation");
         create.setReferenceType("JOB_APPLICATION");
         create.setReferenceId("job-123");
         var reservation = paymentService.createReservation(userId, create);

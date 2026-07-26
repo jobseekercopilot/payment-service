@@ -107,9 +107,12 @@ public final class PaymentIdentityFilter extends OncePerRequestFilter {
         }
         return switch (caller) {
             case PAYMENT_GATEWAY -> PAYMENT_GATEWAY_PATHS.contains(path);
-            case CV_COVER_LETTER_SERVICE -> "POST".equals(request.getMethod())
-                    && (path.equals("/api/v1/payments/reservations")
-                    || path.matches("/api/v1/payments/reservations/[^/]+/(commit|release)"));
+            case CV_COVER_LETTER_SERVICE ->
+                    ("POST".equals(request.getMethod())
+                            && (path.equals("/api/v1/payments/reservations")
+                            || path.matches("/api/v1/payments/reservations/[^/]+/(commit|release)")))
+                    || ("GET".equals(request.getMethod())
+                            && path.matches("/api/v1/payments/reservations/[^/]+"));
             case STRIPE_GATEWAY -> "POST".equals(request.getMethod())
                     && path.equals("/api/v1/payments/confirm-stripe-purchase");
         };

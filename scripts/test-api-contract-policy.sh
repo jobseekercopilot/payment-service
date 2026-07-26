@@ -56,6 +56,32 @@ if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/token-bound
     exit 1
 fi
 
+copy_contract "$temporary_dir/reservation-operation-key"
+jq '.components.schemas.CreateReservationRequest.required -= ["operationKey"]' \
+    "$temporary_dir/reservation-operation-key/openapi.json" \
+    > "$temporary_dir/reservation-operation-key/changed.json"
+mv "$temporary_dir/reservation-operation-key/changed.json" \
+    "$temporary_dir/reservation-operation-key/openapi.json"
+(cd "$temporary_dir/reservation-operation-key" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" \
+        "$temporary_dir/reservation-operation-key/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of reservation operation key" >&2
+    exit 1
+fi
+
+copy_contract "$temporary_dir/reservation-recovery"
+jq 'del(.paths["/api/v1/payments/reservations/{reservationId}"])' \
+    "$temporary_dir/reservation-recovery/openapi.json" \
+    > "$temporary_dir/reservation-recovery/changed.json"
+mv "$temporary_dir/reservation-recovery/changed.json" \
+    "$temporary_dir/reservation-recovery/openapi.json"
+(cd "$temporary_dir/reservation-recovery" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" \
+        "$temporary_dir/reservation-recovery/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of reservation recovery lookup" >&2
+    exit 1
+fi
+
 copy_contract "$temporary_dir/owner-boundary"
 jq 'del(.paths["/api/v1/payments/wallet"].get.parameters)' \
     "$temporary_dir/owner-boundary/openapi.json" \

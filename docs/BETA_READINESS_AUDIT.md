@@ -15,7 +15,7 @@ financial ledger ready for production use.
   reserve/commit/release workflows.
 - Uses explicit ledger transaction boundaries and bounds the transaction-history
   limit to 1–100.
-- `mvn -B --no-transfer-progress clean verify` passed 45 tests with no
+- `mvn -B --no-transfer-progress clean verify` passed 51 tests with no
   failures/errors/skips, including PostgreSQL migration and recovery evidence.
 
 ## Critical findings
@@ -51,12 +51,17 @@ Stripe idempotency still performs a find-then-insert with no globally unique
 provider fulfillment invariant. Different wallets can race the same provider
 session, so PAY-07 remains a P0 beta blocker for real payment traffic.
 
-### Remaining ledger lifecycle work
+### Reservation recovery controls delivered
 
-Signed reservation, spend and release entries now state their balance effects and
-reconstruct the wallet, with immutable operation keys and startup reconciliation.
-Expiry, stuck-reservation cleanup, ambiguous consumer outcomes and the failed CV
-release path remain in PAY-10 and related workflow issues.
+PAY-10 gives every reservation a required owner-scoped operation key, expiry and
+durable transition/reconciliation evidence. Identical lost-response retries
+replay the original creation ledger balance; conflicting key reuse fails closed.
+An owner-scoped lookup resolves ambiguous commit/release outcomes. A bounded
+scheduled reconciler releases expired holds in independent transactions and
+durably flags failed attempts for retry. Real PostgreSQL tests cover duplicate
+create, conflicting reuse, expiry, recovery failure evidence and commit/expiry
+races. The coordinated CV consumer pin and compensation behavior must be merged
+before PAY-10 itself is complete.
 
 ### Untrusted Stripe confirmation
 
@@ -85,14 +90,13 @@ proprietary; this mismatch must be corrected before publication/use.
 | Wallet/starter grant | Concurrency-safe ledger foundation delivered |
 | Pricing | Incomplete; snapshot/disclosure rules absent |
 | Purchase confirmation | Unsafe |
-| Reservation lifecycle | Concurrency-safe; expiry/compensation outstanding |
+| Reservation lifecycle | Producer expiry/recovery delivered; coordinated consumer merge pending |
 | Transaction history | Signed/reconcilable; cursor pagination outstanding |
 | Refund/chargeback | Model placeholders only; behavior absent |
 | Durable storage/migrations | Code foundation delivered; environment recovery evidence outstanding |
 | Observability/operations | Basic logs/health only |
 
 Missing tests include authoritative concurrent provider fulfillment,
-refund/dispute, expiry/compensation, privacy redaction and full browser/provider
-journeys.
+refund/dispute, privacy redaction and full browser/provider journeys.
 
 The Payments epic contains the remaining focused beta-readiness issues.

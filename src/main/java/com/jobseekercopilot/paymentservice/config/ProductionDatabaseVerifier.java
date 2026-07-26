@@ -69,6 +69,22 @@ public class ProductionDatabaseVerifier
             throw new IllegalStateException(
                     "Startup ledger reconciliation is required outside isolated tests");
         }
+        PaymentProperties.ReservationRecovery recovery =
+                paymentProperties.getReservationRecovery();
+        if (!recovery.isEnabled()) {
+            throw new IllegalStateException(
+                    "Expired reservation recovery is required outside isolated tests");
+        }
+        if (recovery.getTtl() == null
+                || recovery.getTtl().isZero()
+                || recovery.getTtl().isNegative()
+                || recovery.getInterval() == null
+                || recovery.getInterval().isZero()
+                || recovery.getInterval().isNegative()
+                || recovery.getBatchSize() < 1) {
+            throw new IllegalStateException(
+                    "Payment reservation recovery settings must be positive");
+        }
     }
 
     private String required(String property) {
