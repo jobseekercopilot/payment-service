@@ -10,22 +10,35 @@ public final class PaymentServiceCredentials {
     static final int MINIMUM_TOKEN_BYTES = 32;
 
     private final String paymentGatewayToken;
+    private final String documentGenerationGatewayToken;
     private final String cvCoverLetterToken;
     private final String stripeGatewayToken;
 
     public PaymentServiceCredentials(
             @Value("${payment.security.payment-gateway-token}") String paymentGatewayToken,
+            @Value("${payment.security.document-generation-gateway-token}")
+            String documentGenerationGatewayToken,
             @Value("${payment.security.cv-cover-letter-token}") String cvCoverLetterToken,
             @Value("${payment.security.stripe-gateway-token}") String stripeGatewayToken) {
         this.paymentGatewayToken = validate(paymentGatewayToken, "Payment Gateway service token");
+        this.documentGenerationGatewayToken = validate(
+                documentGenerationGatewayToken,
+                "Document Generation Gateway service token");
         this.cvCoverLetterToken = validate(cvCoverLetterToken, "CV and Cover Letter service token");
         this.stripeGatewayToken = validate(stripeGatewayToken, "Stripe Gateway service token");
-        requireDistinct(this.paymentGatewayToken, this.cvCoverLetterToken, this.stripeGatewayToken);
+        requireDistinct(
+                this.paymentGatewayToken,
+                this.documentGenerationGatewayToken,
+                this.cvCoverLetterToken,
+                this.stripeGatewayToken);
     }
 
     public PaymentCaller authenticate(String supplied) {
         if (matches(supplied, paymentGatewayToken)) {
             return PaymentCaller.PAYMENT_GATEWAY;
+        }
+        if (matches(supplied, documentGenerationGatewayToken)) {
+            return PaymentCaller.DOCUMENT_GENERATION_GATEWAY;
         }
         if (matches(supplied, cvCoverLetterToken)) {
             return PaymentCaller.CV_COVER_LETTER_SERVICE;
