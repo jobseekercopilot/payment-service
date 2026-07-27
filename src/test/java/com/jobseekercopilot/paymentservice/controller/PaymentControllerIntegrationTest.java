@@ -34,6 +34,8 @@ class PaymentControllerIntegrationTest {
     private static final String OWNER_HEADER = "X-Payment-Owner";
     private static final String PAYMENT_GATEWAY_TOKEN =
             "payment-gateway-test-token-0000000000000001";
+    private static final String DOCUMENT_GENERATION_GATEWAY_TOKEN =
+            "document-generation-gateway-test-token-00000001";
     private static final String CV_COVER_LETTER_TOKEN =
             "cv-cover-letter-test-token-000000000000001";
     private static final String STRIPE_GATEWAY_TOKEN =
@@ -382,6 +384,54 @@ class PaymentControllerIntegrationTest {
                                 """))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("SERVICE_NOT_AUTHORIZED"));
+
+        mockMvc.perform(get("/api/v1/payments/wallet")
+                        .with(documentGenerationGateway("user-123")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("SERVICE_NOT_AUTHORIZED"));
+
+        mockMvc.perform(post("/api/v1/payments/confirm-stripe-purchase")
+                        .with(documentGenerationGateway("user-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("SERVICE_NOT_AUTHORIZED"));
+    }
+
+    @Test
+    void documentGenerationGatewayCanUseOnlyOwnerScopedReservationLifecycle() throws Exception {
+        CreateReservationRequest request = new CreateReservationRequest();
+        request.setFeature("CV_AND_COVER_LETTER_GENERATION");
+        request.setEstimatedTokens(1000);
+        request.setOperationKey("docgen-gateway-operation");
+
+        String reservationJson = mockMvc.perform(post("/api/v1/payments/reservations")
+                        .with(documentGenerationGateway("owner-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operationKey").value("docgen-gateway-operation"))
+                .andReturn().getResponse().getContentAsString();
+        String reservationId = objectMapper.readTree(reservationJson).get("reservationId").asText();
+
+        mockMvc.perform(get("/api/v1/payments/reservations/{reservationId}", reservationId)
+                        .with(documentGenerationGateway("owner-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(reservationId));
+
+        ReleaseReservationRequest release = new ReleaseReservationRequest();
+        release.setReason("deterministic local verification");
+        mockMvc.perform(post("/api/v1/payments/reservations/{reservationId}/release", reservationId)
+                        .with(documentGenerationGateway("owner-123"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(release)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.releasedTokens").value(1000));
+
+        mockMvc.perform(get("/api/v1/payments/reservations/{reservationId}", reservationId)
+                        .with(documentGenerationGateway("owner-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RELEASED"));
     }
 
     @Test
@@ -437,6 +487,10 @@ class PaymentControllerIntegrationTest {
 
     private RequestPostProcessor cvCoverLetter(String owner) {
         return serviceIdentity(CV_COVER_LETTER_TOKEN, owner);
+    }
+
+    private RequestPostProcessor documentGenerationGateway(String owner) {
+        return serviceIdentity(DOCUMENT_GENERATION_GATEWAY_TOKEN, owner);
     }
 
     private RequestPostProcessor stripeGateway(String owner) {

@@ -2,11 +2,12 @@
 
 Every `/api/v1/payments` request requires exactly one `X-Service-Token`.
 Tokens contain at least 32 UTF-8 bytes, are distinct per caller, and are
-compared in constant time. A valid token identifies one of three callers:
+compared in constant time. A valid token identifies one of four callers:
 
 | Caller | Allowed operations |
 | --- | --- |
 | Payment Gateway | wallet, transactions, pricing, estimate and demo purchase |
+| Document Generation Gateway | create, inspect, commit and release owner-scoped reservations |
 | CV and Cover Letter Service | create, commit and release reservations |
 | Stripe Gateway | confirm a signed Stripe purchase |
 
@@ -22,6 +23,7 @@ produce the same response.
 ## Configuration
 
 - `PAYMENT_GATEWAY_TO_PAYMENT_SERVICE_TOKEN`
+- `DOCUMENT_GENERATION_GATEWAY_TO_PAYMENT_SERVICE_TOKEN`
 - `CV_COVER_LETTER_TO_PAYMENT_SERVICE_TOKEN`
 - `STRIPE_GATEWAY_TO_PAYMENT_SERVICE_TOKEN`
 
