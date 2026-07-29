@@ -6,6 +6,7 @@ import com.jobseekercopilot.paymentservice.repository.AiTokenReservationReposito
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
 import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,6 +22,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/internal/system-data")
+@SecurityRequirement(name = "environmentDataToken")
 public class PaymentSystemDataController {
     private final EnvironmentDataGuard guard;
     private final AiTokenWalletRepository walletRepository;
@@ -28,6 +30,7 @@ public class PaymentSystemDataController {
     private final AiTokenReservationRepository reservationRepository;
     private final FixtureLedgerSeedValidator fixtureLedgerSeedValidator;
     private final LedgerReconciliationService reconciliationService;
+    private final EnvironmentLedgerReset environmentLedgerReset;
 
     public PaymentSystemDataController(
             EnvironmentDataGuard guard,
@@ -35,13 +38,15 @@ public class PaymentSystemDataController {
             AiTokenTransactionRepository transactionRepository,
             AiTokenReservationRepository reservationRepository,
             FixtureLedgerSeedValidator fixtureLedgerSeedValidator,
-            LedgerReconciliationService reconciliationService) {
+            LedgerReconciliationService reconciliationService,
+            EnvironmentLedgerReset environmentLedgerReset) {
         this.guard = guard;
         this.walletRepository = walletRepository;
         this.transactionRepository = transactionRepository;
         this.reservationRepository = reservationRepository;
         this.fixtureLedgerSeedValidator = fixtureLedgerSeedValidator;
         this.reconciliationService = reconciliationService;
+        this.environmentLedgerReset = environmentLedgerReset;
     }
 
     @Transactional
@@ -72,11 +77,10 @@ public class PaymentSystemDataController {
     @DeleteMapping("/scenario/{scenarioId}/payments/{userId}")
     public ResponseEntity<SystemDataResult> resetPayments(@PathVariable String scenarioId, @PathVariable String userId) {
         guard.requireEnabled();
-        int transactions = transactionRepository.findByUserId(userId).size();
         int reservations = reservationRepository.findByUserId(userId).size();
         int wallets = walletRepository.findByUserId(userId).isPresent() ? 1 : 0;
         reservationRepository.deleteByUserId(userId);
-        transactionRepository.deleteByUserId(userId);
+        int transactions = environmentLedgerReset.deleteOwnerLedger(userId);
         walletRepository.deleteByUserId(userId);
         return ResponseEntity.ok(SystemDataResult.success("RESET", wallets + transactions + reservations, guard.activeEnvironment(), Map.of(
                 "scenarioId", scenarioId,

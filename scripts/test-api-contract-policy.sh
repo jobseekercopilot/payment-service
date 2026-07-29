@@ -104,6 +104,19 @@ if "$repository_root/scripts/verify-api-contract.sh" "$temporary_dir/service-ide
     exit 1
 fi
 
+copy_contract "$temporary_dir/environment-data-identity"
+jq 'del(.components.securitySchemes.environmentDataToken)' \
+    "$temporary_dir/environment-data-identity/openapi.json" \
+    > "$temporary_dir/environment-data-identity/changed.json"
+mv "$temporary_dir/environment-data-identity/changed.json" \
+    "$temporary_dir/environment-data-identity/openapi.json"
+(cd "$temporary_dir/environment-data-identity" && sha256sum openapi.json > SHA256SUMS)
+if "$repository_root/scripts/verify-api-contract.sh" \
+        "$temporary_dir/environment-data-identity/openapi.json" >/dev/null 2>&1; then
+    echo "API contract negative test accepted removal of environment-data authentication" >&2
+    exit 1
+fi
+
 copy_contract "$temporary_dir/ledger-delta"
 jq 'del(.components.schemas.TransactionResponse.properties.balanceDeltaTokens)' \
     "$temporary_dir/ledger-delta/openapi.json" \

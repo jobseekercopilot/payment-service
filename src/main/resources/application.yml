@@ -74,3 +74,8 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"
   level:
     com.jobseekercopilot: ${APP_LOG_LEVEL:INFO}
+
+environment-data:
+  enabled: ${ENVIRONMENT_DATA_ENABLED:false}
+  isolated-database: ${ENVIRONMENT_DATA_ISOLATED_DATABASE:false}
+  token: ${ENVIRONMENT_DATA_TOKEN:}

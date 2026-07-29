@@ -24,6 +24,15 @@ jq -e '
     (.info.version == "3.0.0") and
     (.components.securitySchemes.serviceToken
         | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
+    (.components.securitySchemes.environmentDataToken
+        | .type == "apiKey" and .in == "header" and
+          .name == "X-Environment-Data-Token") and
+    (.paths["/internal/system-data/seed/payments"].post.security
+        == [{"environmentDataToken": []}]) and
+    (.paths["/internal/system-data/verify/payments/{userId}"].get.security
+        == [{"environmentDataToken": []}]) and
+    (.paths["/internal/system-data/scenario/{scenarioId}/payments/{userId}"].delete.security
+        == [{"environmentDataToken": []}]) and
     (.paths["/api/v1/payments/wallet"].get.operationId == "wallet") and
     (.paths["/api/v1/payments/transactions"].get.operationId == "transactions") and
     (.paths["/api/v1/payments/pricing"].get.operationId == "pricing") and

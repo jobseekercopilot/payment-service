@@ -9,6 +9,7 @@ public class EnvironmentDataProperties {
     private boolean enabled = false;
     private boolean isolatedDatabase = false;
     private List<String> allowedEnvironments = List.of("local", "test", "demo");
+    private String token = "";
 
     public boolean isEnabled() {
         return enabled;
@@ -32,5 +33,13 @@ public class EnvironmentDataProperties {
 
     public void setAllowedEnvironments(List<String> allowedEnvironments) {
         this.allowedEnvironments = allowedEnvironments;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
     }
 }
