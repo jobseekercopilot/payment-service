@@ -14,6 +14,9 @@ same semantic request returns the original hold, while conflicting reuse fails
 closed. Creation responses expose `expiresAt`, and the owner-scoped reservation
 lookup exposes transition and reconciliation evidence. The major version is
 intentional because requiring `operationKey` breaks version 2 consumers.
+Isolated System Data operations use the independent
+`X-Environment-Data-Token` boundary rather than a normal payment-service
+identity.
 PAY-08 adds signed `balanceDeltaTokens` and immutable `operationId` fields to
 transaction responses. The isolated System Data transaction schema also exposes
 the database-assigned `sequenceNumber`; seed validation, not caller input,

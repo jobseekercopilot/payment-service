@@ -106,13 +106,21 @@ controlled work.
 
 ## Isolated fixtures
 
-System Data mutation requires all three controls:
+System Data mutation requires all four controls:
 
 - `environment-data.enabled=true`;
 - `environment-data.isolated-database=true`;
-- an allowed non-production profile.
+- an allowed non-production profile;
+- exactly one valid `X-Environment-Data-Token` credential.
 
 The production profile is always rejected. Seeded wallets, entries and
 reservations must share one owner and wallet, entries must form one chronological
 balance chain, and the final entry must reconcile with the wallet. The service
 reconciles again inside the seed transaction before accepting the fixture.
+
+Where an isolated PostgreSQL database retains the live append-only trigger,
+fixture reset uses a transaction-local owner setting. The trigger permits only
+`DELETE` rows whose owner exactly matches that setting; `UPDATE` remains
+forbidden. The guarded reset component establishes the setting and performs the
+delete on the same connection and transaction, so commit or rollback clears it
+before the pooled connection can be reused.

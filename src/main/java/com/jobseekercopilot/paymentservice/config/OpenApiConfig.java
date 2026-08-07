@@ -14,13 +14,21 @@ public class OpenApiConfig {
     @Bean
     public OpenAPI paymentServiceOpenAPI() {
         return new OpenAPI()
-                .components(new Components().addSecuritySchemes(
-                        "serviceToken",
-                        new SecurityScheme()
-                                .type(SecurityScheme.Type.APIKEY)
-                                .in(SecurityScheme.In.HEADER)
-                                .name("X-Service-Token")
-                                .description("Dedicated service identity; caller permissions are route-scoped.")))
+                .components(new Components()
+                        .addSecuritySchemes(
+                                "serviceToken",
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.APIKEY)
+                                        .in(SecurityScheme.In.HEADER)
+                                        .name("X-Service-Token")
+                                        .description("Dedicated service identity; caller permissions are route-scoped."))
+                        .addSecuritySchemes(
+                                "environmentDataToken",
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.APIKEY)
+                                        .in(SecurityScheme.In.HEADER)
+                                        .name("X-Environment-Data-Token")
+                                        .description("Dedicated credential for isolated environment-data operations.")))
                 .info(new Info()
                         .title("Payment Service API")
                         .description("Owns AI Credit wallets, transactions and reservations. Every payment API "

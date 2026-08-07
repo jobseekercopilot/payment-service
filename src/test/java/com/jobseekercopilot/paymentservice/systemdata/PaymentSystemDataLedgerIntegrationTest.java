@@ -28,11 +28,15 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest(properties = {
     "environment-data.enabled=true",
     "environment-data.isolated-database=true",
-    "environment-data.allowed-environments=test"
+    "environment-data.allowed-environments=test",
+    "environment-data.token=environment-data-integration-token-00000001"
 })
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
 class PaymentSystemDataLedgerIntegrationTest {
+    private static final String ENVIRONMENT_DATA_TOKEN =
+            "environment-data-integration-token-00000001";
+
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AiTokenWalletRepository walletRepository;
@@ -75,6 +79,7 @@ class PaymentSystemDataLedgerIntegrationTest {
                 List.of());
 
         mockMvc.perform(post("/internal/system-data/seed/payments")
+                        .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(request)))
                 .andExpect(status().isOk())
@@ -110,6 +115,7 @@ class PaymentSystemDataLedgerIntegrationTest {
                 List.of());
 
         mockMvc.perform(post("/internal/system-data/seed/payments")
+                        .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(request)))
                 .andExpect(status().isBadRequest())
