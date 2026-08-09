@@ -2,6 +2,8 @@ package com.jobseekercopilot.paymentservice.systemdata;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -14,6 +16,7 @@ import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionReposito
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
 import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -127,10 +130,98 @@ class PaymentSystemDataLedgerIntegrationTest {
                 .isEmpty();
     }
 
+    @Test
+    void runtimeOwnerCleanupIsSyntheticBoundedCrossOwnerSafeAndRepeatable()
+            throws Exception {
+        String scenarioId = "cross-user-security-v1";
+        String identityKey = "claimant-a";
+        UUID ownerId = syntheticOwner(scenarioId, identityKey);
+        UUID walletId = UUID.randomUUID();
+        AiTokenWallet ownerWallet = wallet(
+                walletId, ownerId.toString(), 12_000);
+        SystemDataPaymentSeedRequest ownerRequest =
+                new SystemDataPaymentSeedRequest(
+                        scenarioId,
+                        ownerId.toString(),
+                        ownerWallet,
+                        List.of(
+                                entry(
+                                        walletId,
+                                        ownerId.toString(),
+                                        TransactionType.DEMO_PURCHASE,
+                                        20_000,
+                                        0,
+                                        20_000,
+                                        "FIXTURE:cross-user-security-v1:purchase",
+                                        Instant.parse("2026-01-01T00:00:00Z")),
+                                entry(
+                                        walletId,
+                                        ownerId.toString(),
+                                        TransactionType.SPEND,
+                                        -8_000,
+                                        20_000,
+                                        12_000,
+                                        "FIXTURE:cross-user-security-v1:spend",
+                                        Instant.parse("2026-01-02T00:00:00Z"))),
+                        List.of());
+        mockMvc.perform(post("/internal/system-data/seed/payments")
+                        .header(
+                                EnvironmentDataGuard.TOKEN_HEADER,
+                                ENVIRONMENT_DATA_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(ownerRequest)))
+                .andExpect(status().isOk());
+        walletRepository.saveAndFlush(wallet(
+                UUID.randomUUID(),
+                syntheticOwner(scenarioId, "claimant-b").toString(),
+                5_000));
+
+        String path = "/internal/system-data/v1/runtime-owners/{scenarioId}"
+                + "/identities/{identityKey}/owners/{userId}";
+        mockMvc.perform(get(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                EnvironmentDataGuard.TOKEN_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.wallets").value(1))
+                .andExpect(jsonPath("$.details.ledgerEntries").value(2));
+
+        mockMvc.perform(delete(
+                                path,
+                                scenarioId,
+                                identityKey,
+                                UUID.randomUUID())
+                        .header(
+                                EnvironmentDataGuard.TOKEN_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(delete(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                EnvironmentDataGuard.TOKEN_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recordsAffected").value(3));
+        assertThat(walletRepository.findByUserId(ownerId.toString())).isEmpty();
+        assertThat(walletRepository.findAll()).hasSize(1);
+
+        mockMvc.perform(delete(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                EnvironmentDataGuard.TOKEN_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recordsAffected").value(0));
+    }
+
     private AiTokenWallet wallet(UUID walletId, long balance) {
+        return wallet(walletId, "fixture-owner", balance);
+    }
+
+    private AiTokenWallet wallet(
+            UUID walletId, String ownerId, long balance) {
         return AiTokenWallet.builder()
                 .id(walletId)
-                .userId("fixture-owner")
+                .userId(ownerId)
                 .balanceTokens(balance)
                 .lifetimePurchasedTokens(20_000)
                 .lifetimeSpentTokens(8_000)
@@ -147,9 +238,29 @@ class PaymentSystemDataLedgerIntegrationTest {
             long after,
             String operationId,
             Instant createdAt) {
+        return entry(
+                walletId,
+                "fixture-owner",
+                type,
+                delta,
+                before,
+                after,
+                operationId,
+                createdAt);
+    }
+
+    private AiTokenTransaction entry(
+            UUID walletId,
+            String ownerId,
+            TransactionType type,
+            long delta,
+            long before,
+            long after,
+            String operationId,
+            Instant createdAt) {
         return AiTokenTransaction.builder()
                 .id(UUID.randomUUID())
-                .userId("fixture-owner")
+                .userId(ownerId)
                 .walletId(walletId)
                 .transactionType(type)
                 .tokenAmount(Math.abs(delta))
@@ -159,5 +270,13 @@ class PaymentSystemDataLedgerIntegrationTest {
                 .operationId(operationId)
                 .createdAt(createdAt)
                 .build();
+    }
+
+    private UUID syntheticOwner(String scenarioId, String identityKey) {
+        return UUID.nameUUIDFromBytes(("job-seeker-copilot:system-data:"
+                + scenarioId
+                + ":"
+                + identityKey
+                + ":user").getBytes(StandardCharsets.UTF_8));
     }
 }

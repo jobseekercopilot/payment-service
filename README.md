@@ -49,6 +49,10 @@ mvn -B --no-transfer-progress clean verify
 See [`docs/CONTRACT_GOVERNANCE.md`](docs/CONTRACT_GOVERNANCE.md) for ownership,
 versioning and consumer-pin rules.
 
+Contract version 3.1.0 adds the isolated-E2E-only runtime-owner cleanup and
+verification boundary for deterministic named-state identities. Existing
+public Payment and fixture operations remain compatible.
+
 The full test suite needs a Docker-compatible runtime because it proves the
 ledger against PostgreSQL 15, including dump/restore and append-only enforcement.
 
