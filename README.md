@@ -1,5 +1,13 @@
 # Payment Service
 
+## Role in Job Seeker Copilot
+
+| Role | Called by | Calls | Data | Local port |
+|---|---|---|---|---:|
+| System of record for AI-credit wallets, append-only transactions and reservations | Payment/Stripe gateways, Document Generation, CV/Cover Letter | None | Own PostgreSQL database | 8099 |
+
+See the central [payment journey/status](https://docs.jobseekercopilot.com/journeys/reporting-payments/), [payment domain model](https://docs.jobseekercopilot.com/data/domain-models/), and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
+
 Spring Boot service for the inherited Job Seeker Copilot AI Credit wallet,
 transaction and reservation model.
 
