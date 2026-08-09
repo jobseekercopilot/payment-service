@@ -47,6 +47,10 @@ public class EnvironmentDataGuard {
         }
     }
 
+    public void requireRuntimeOwnerCleanup() {
+        requireEnabled();
+    }
+
     public boolean hasValidToken(String suppliedToken) {
         if (!validConfiguredToken() || suppliedToken == null) {
             return false;
