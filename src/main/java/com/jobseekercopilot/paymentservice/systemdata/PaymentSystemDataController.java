@@ -7,7 +7,9 @@ import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionReposito
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
 import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,10 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/internal/system-data")
 @SecurityRequirement(name = "environmentDataToken")
+@Validated
 public class PaymentSystemDataController {
     private final EnvironmentDataGuard guard;
     private final AiTokenWalletRepository walletRepository;
@@ -77,30 +81,67 @@ public class PaymentSystemDataController {
     @DeleteMapping("/scenario/{scenarioId}/payments/{userId}")
     public ResponseEntity<SystemDataResult> resetPayments(@PathVariable String scenarioId, @PathVariable String userId) {
         guard.requireEnabled();
+        return resetPaymentsForOwner(scenarioId, userId, Map.of());
+    }
+
+    @Transactional
+    @DeleteMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
+            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
+            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireEnabled();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        return resetPaymentsForOwner(scenarioId, userId.toString(), Map.of("identityKey", identityKey));
+    }
+
+    private ResponseEntity<SystemDataResult> resetPaymentsForOwner(
+            String scenarioId, String userId, Map<String, Object> extraDetails) {
         int reservations = reservationRepository.findByUserId(userId).size();
         int wallets = walletRepository.findByUserId(userId).isPresent() ? 1 : 0;
         reservationRepository.deleteByUserId(userId);
         int transactions = environmentLedgerReset.deleteOwnerLedger(userId);
         walletRepository.deleteByUserId(userId);
-        return ResponseEntity.ok(SystemDataResult.success("RESET", wallets + transactions + reservations, guard.activeEnvironment(), Map.of(
-                "scenarioId", scenarioId,
-                "userId", userId,
-                "wallets", wallets,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("scenarioId", scenarioId);
+        details.put("userId", userId);
+        details.put("wallets", wallets);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET", wallets + transactions + reservations, guard.activeEnvironment(), details));
     }
 
     @GetMapping("/verify/payments/{userId}")
     public ResponseEntity<SystemDataResult> verifyPayments(@PathVariable String userId) {
         guard.requireEnabled();
+        return verifyPaymentsForOwner(userId, Map.of());
+    }
+
+    @GetMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
+            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
+            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireEnabled();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        return verifyPaymentsForOwner(
+                userId.toString(), Map.of("scenarioId", scenarioId, "identityKey", identityKey));
+    }
+
+    private ResponseEntity<SystemDataResult> verifyPaymentsForOwner(
+            String userId, Map<String, Object> extraDetails) {
         int transactions = transactionRepository.findByUserId(userId).size();
         int reservations = reservationRepository.findByUserId(userId).size();
         long balance = walletRepository.findByUserId(userId).map(wallet -> wallet.getBalanceTokens()).orElse(0L);
-        return ResponseEntity.ok(SystemDataResult.success("VERIFY", transactions + reservations + (balance > 0 ? 1 : 0), guard.activeEnvironment(), Map.of(
-                "userId", userId,
-                "walletExists", walletRepository.findByUserId(userId).isPresent(),
-                "balanceTokens", balance,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("userId", userId);
+        details.put("walletExists", walletRepository.findByUserId(userId).isPresent());
+        details.put("balanceTokens", balance);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY", transactions + reservations + (balance > 0 ? 1 : 0),
+                guard.activeEnvironment(), details));
     }
 }
