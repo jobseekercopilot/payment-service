@@ -21,7 +21,7 @@ done
 jq -e '
     . as $root |
     (.openapi | type == "string" and startswith("3.")) and
-    (.info.version == "3.0.0") and
+    (.info.version == "3.1.0") and
     (.components.securitySchemes.serviceToken
         | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
     (.components.securitySchemes.environmentDataToken
@@ -32,6 +32,10 @@ jq -e '
     (.paths["/internal/system-data/verify/payments/{userId}"].get.security
         == [{"environmentDataToken": []}]) and
     (.paths["/internal/system-data/scenario/{scenarioId}/payments/{userId}"].delete.security
+        == [{"environmentDataToken": []}]) and
+    (.paths["/internal/system-data/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}"].delete.security
+        == [{"environmentDataToken": []}]) and
+    (.paths["/internal/system-data/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}"].get.security
         == [{"environmentDataToken": []}]) and
     (.paths["/api/v1/payments/wallet"].get.operationId == "wallet") and
     (.paths["/api/v1/payments/transactions"].get.operationId == "transactions") and

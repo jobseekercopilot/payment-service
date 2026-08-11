@@ -9,8 +9,8 @@ import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -84,17 +84,6 @@ public class PaymentSystemDataController {
         return resetPaymentsForOwner(scenarioId, userId, Map.of());
     }
 
-    @Transactional
-    @DeleteMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
-    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
-            @PathVariable UUID userId) {
-        guard.requireEnabled();
-        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
-        return resetPaymentsForOwner(scenarioId, userId.toString(), Map.of("identityKey", identityKey));
-    }
-
     private ResponseEntity<SystemDataResult> resetPaymentsForOwner(
             String scenarioId, String userId, Map<String, Object> extraDetails) {
         int reservations = reservationRepository.findByUserId(userId).size();
@@ -118,17 +107,6 @@ public class PaymentSystemDataController {
         return verifyPaymentsForOwner(userId, Map.of());
     }
 
-    @GetMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
-    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
-            @PathVariable UUID userId) {
-        guard.requireEnabled();
-        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
-        return verifyPaymentsForOwner(
-                userId.toString(), Map.of("scenarioId", scenarioId, "identityKey", identityKey));
-    }
-
     private ResponseEntity<SystemDataResult> verifyPaymentsForOwner(
             String userId, Map<String, Object> extraDetails) {
         int transactions = transactionRepository.findByUserId(userId).size();
@@ -143,5 +121,59 @@ public class PaymentSystemDataController {
         return ResponseEntity.ok(SystemDataResult.success(
                 "VERIFY", transactions + reservations + (balance > 0 ? 1 : 0),
                 guard.activeEnvironment(), details));
+    }
+
+    @Transactional
+    @DeleteMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        String owner = userId.toString();
+        OwnerRuntimePaymentSummary summary = ownerSummary(owner);
+        reservationRepository.deleteByUserId(owner);
+        environmentLedgerReset.deleteOwnerLedger(owner);
+        walletRepository.deleteByUserId(owner);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    @GetMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        OwnerRuntimePaymentSummary summary = ownerSummary(userId.toString());
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    private OwnerRuntimePaymentSummary ownerSummary(String ownerId) {
+        var wallet = walletRepository.findByUserId(ownerId);
+        return new OwnerRuntimePaymentSummary(
+                wallet.isPresent() ? 1 : 0,
+                transactionRepository.findByUserId(ownerId).size(),
+                reservationRepository.findByUserId(ownerId).size(),
+                wallet.map(value -> value.getBalanceTokens()).orElse(0L));
     }
 }

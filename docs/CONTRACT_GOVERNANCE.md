@@ -17,6 +17,10 @@ intentional because requiring `operationKey` breaks version 2 consumers.
 Isolated System Data operations use the independent
 `X-Environment-Data-Token` boundary rather than a normal payment-service
 identity.
+Version 3.1 adds a runtime-owner reset and verification boundary for
+deterministic named-state identities. It retains the same environment-data
+credential and is enabled only by the existing isolated-database and
+non-production guards; public Payment and fixture operations are unchanged.
 PAY-08 adds signed `balanceDeltaTokens` and immutable `operationId` fields to
 transaction responses. The isolated System Data transaction schema also exposes
 the database-assigned `sequenceNumber`; seed validation, not caller input,
