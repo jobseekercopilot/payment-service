@@ -81,31 +81,46 @@ public class PaymentSystemDataController {
     @DeleteMapping("/scenario/{scenarioId}/payments/{userId}")
     public ResponseEntity<SystemDataResult> resetPayments(@PathVariable String scenarioId, @PathVariable String userId) {
         guard.requireEnabled();
+        return resetPaymentsForOwner(scenarioId, userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> resetPaymentsForOwner(
+            String scenarioId, String userId, Map<String, Object> extraDetails) {
         int reservations = reservationRepository.findByUserId(userId).size();
         int wallets = walletRepository.findByUserId(userId).isPresent() ? 1 : 0;
         reservationRepository.deleteByUserId(userId);
         int transactions = environmentLedgerReset.deleteOwnerLedger(userId);
         walletRepository.deleteByUserId(userId);
-        return ResponseEntity.ok(SystemDataResult.success("RESET", wallets + transactions + reservations, guard.activeEnvironment(), Map.of(
-                "scenarioId", scenarioId,
-                "userId", userId,
-                "wallets", wallets,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("scenarioId", scenarioId);
+        details.put("userId", userId);
+        details.put("wallets", wallets);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET", wallets + transactions + reservations, guard.activeEnvironment(), details));
     }
 
     @GetMapping("/verify/payments/{userId}")
     public ResponseEntity<SystemDataResult> verifyPayments(@PathVariable String userId) {
         guard.requireEnabled();
+        return verifyPaymentsForOwner(userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> verifyPaymentsForOwner(
+            String userId, Map<String, Object> extraDetails) {
         int transactions = transactionRepository.findByUserId(userId).size();
         int reservations = reservationRepository.findByUserId(userId).size();
         long balance = walletRepository.findByUserId(userId).map(wallet -> wallet.getBalanceTokens()).orElse(0L);
-        return ResponseEntity.ok(SystemDataResult.success("VERIFY", transactions + reservations + (balance > 0 ? 1 : 0), guard.activeEnvironment(), Map.of(
-                "userId", userId,
-                "walletExists", walletRepository.findByUserId(userId).isPresent(),
-                "balanceTokens", balance,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("userId", userId);
+        details.put("walletExists", walletRepository.findByUserId(userId).isPresent());
+        details.put("balanceTokens", balance);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY", transactions + reservations + (balance > 0 ? 1 : 0),
+                guard.activeEnvironment(), details));
     }
 
     @Transactional
