@@ -5,6 +5,13 @@ import com.jobseekercopilot.paymentservice.entity.AiTokenTransaction;
 import com.jobseekercopilot.paymentservice.repository.AiTokenReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.FoundingPromotionReservationRepository;
+import com.jobseekercopilot.paymentservice.repository.PaymentOrderRepository;
+import com.jobseekercopilot.paymentservice.repository.PaymentProviderEventRepository;
+import com.jobseekercopilot.paymentservice.service.DocumentCreditWalletProvisioner;
 import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.constraints.Pattern;
@@ -35,6 +42,13 @@ public class PaymentSystemDataController {
     private final FixtureLedgerSeedValidator fixtureLedgerSeedValidator;
     private final LedgerReconciliationService reconciliationService;
     private final EnvironmentLedgerReset environmentLedgerReset;
+    private final DocumentCreditWalletRepository documentCreditWalletRepository;
+    private final DocumentCreditTransactionRepository documentCreditTransactionRepository;
+    private final DocumentCreditReservationRepository documentCreditReservationRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
+    private final PaymentProviderEventRepository paymentProviderEventRepository;
+    private final FoundingPromotionReservationRepository promotionReservationRepository;
+    private final DocumentCreditWalletProvisioner documentCreditWalletProvisioner;
 
     public PaymentSystemDataController(
             EnvironmentDataGuard guard,
@@ -43,7 +57,14 @@ public class PaymentSystemDataController {
             AiTokenReservationRepository reservationRepository,
             FixtureLedgerSeedValidator fixtureLedgerSeedValidator,
             LedgerReconciliationService reconciliationService,
-            EnvironmentLedgerReset environmentLedgerReset) {
+            EnvironmentLedgerReset environmentLedgerReset,
+            DocumentCreditWalletRepository documentCreditWalletRepository,
+            DocumentCreditTransactionRepository documentCreditTransactionRepository,
+            DocumentCreditReservationRepository documentCreditReservationRepository,
+            PaymentOrderRepository paymentOrderRepository,
+            PaymentProviderEventRepository paymentProviderEventRepository,
+            FoundingPromotionReservationRepository promotionReservationRepository,
+            DocumentCreditWalletProvisioner documentCreditWalletProvisioner) {
         this.guard = guard;
         this.walletRepository = walletRepository;
         this.transactionRepository = transactionRepository;
@@ -51,6 +72,13 @@ public class PaymentSystemDataController {
         this.fixtureLedgerSeedValidator = fixtureLedgerSeedValidator;
         this.reconciliationService = reconciliationService;
         this.environmentLedgerReset = environmentLedgerReset;
+        this.documentCreditWalletRepository = documentCreditWalletRepository;
+        this.documentCreditTransactionRepository = documentCreditTransactionRepository;
+        this.documentCreditReservationRepository = documentCreditReservationRepository;
+        this.paymentOrderRepository = paymentOrderRepository;
+        this.paymentProviderEventRepository = paymentProviderEventRepository;
+        this.promotionReservationRepository = promotionReservationRepository;
+        this.documentCreditWalletProvisioner = documentCreditWalletProvisioner;
     }
 
     @Transactional
@@ -138,11 +166,33 @@ public class PaymentSystemDataController {
         SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
         String owner = userId.toString();
         OwnerRuntimePaymentSummary summary = ownerSummary(owner);
+        environmentLedgerReset.deleteOwnerDocumentCreditData(owner);
         reservationRepository.deleteByUserId(owner);
         environmentLedgerReset.deleteOwnerLedger(owner);
         walletRepository.deleteByUserId(owner);
         return ResponseEntity.ok(SystemDataResult.success(
                 "RESET_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    @PostMapping(
+            "/v2/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}/document-credit-wallet")
+    public ResponseEntity<SystemDataResult> seedRuntimeDocumentCreditWallet(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        documentCreditWalletProvisioner.ensureWallet(userId.toString());
+        OwnerRuntimePaymentSummary summary = ownerSummary(userId.toString());
+        return ResponseEntity.ok(SystemDataResult.success(
+                "SEED_RUNTIME_DOCUMENT_CREDIT_WALLET",
                 summary.total(),
                 guard.activeEnvironment(),
                 summary.details(scenarioId, identityKey)));
@@ -169,11 +219,29 @@ public class PaymentSystemDataController {
     }
 
     private OwnerRuntimePaymentSummary ownerSummary(String ownerId) {
-        var wallet = walletRepository.findByUserId(ownerId);
+        var legacyWallet = walletRepository.findByUserId(ownerId);
+        var documentWallet = documentCreditWalletRepository.findByUserId(ownerId);
+        List<com.jobseekercopilot.paymentservice.entity.PaymentOrder> orders =
+                paymentOrderRepository.findByUserIdOrderByCreatedAtAsc(ownerId);
+        List<UUID> orderIds = orders.stream()
+                .map(com.jobseekercopilot.paymentservice.entity.PaymentOrder::getId)
+                .toList();
         return new OwnerRuntimePaymentSummary(
-                wallet.isPresent() ? 1 : 0,
-                transactionRepository.findByUserId(ownerId).size(),
-                reservationRepository.findByUserId(ownerId).size(),
-                wallet.map(value -> value.getBalanceTokens()).orElse(0L));
+                legacyWallet.isPresent() ? 1 : 0,
+                documentWallet.isPresent() ? 1 : 0,
+                transactionRepository.findByUserId(ownerId).size()
+                        + documentCreditTransactionRepository
+                        .findByUserIdOrderBySequenceNumberAsc(ownerId).size(),
+                reservationRepository.findByUserId(ownerId).size()
+                        + documentCreditReservationRepository
+                        .findByUserIdOrderByCreatedAtAsc(ownerId).size(),
+                legacyWallet.map(value -> value.getBalanceTokens()).orElse(0L),
+                documentWallet.map(value -> value.getBalanceCredits()).orElse(0),
+                orders.size(),
+                orderIds.isEmpty() ? 0 : paymentProviderEventRepository
+                        .findByOrderIdInOrderByReceivedAtAsc(orderIds).size(),
+                (int) orderIds.stream()
+                        .filter(id -> promotionReservationRepository.findByOrderId(id).isPresent())
+                        .count());
     }
 }

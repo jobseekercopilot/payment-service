@@ -36,7 +36,7 @@ public class OpenApiConfig {
                                 + "Credit routes remain available during migration. Every payment API operation "
                                 + "requires an authorized service identity; owner-scoped operations also require "
                                 + "the trusted X-Payment-Owner context.")
-                        .version("3.2.1")
+                        .version("3.3.0")
                         .contact(new Contact().name("Jobseeker Copilot"))
                         .license(new License().name("MIT")));
     }

@@ -14,6 +14,9 @@ import com.jobseekercopilot.paymentservice.entity.AiTokenWallet;
 import com.jobseekercopilot.paymentservice.entity.TransactionType;
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
@@ -76,6 +79,8 @@ class PostgresPaymentSystemDataResetIntegrationTest {
     @Autowired private EnvironmentLedgerReset environmentLedgerReset;
     @Autowired private AiTokenWalletRepository walletRepository;
     @Autowired private AiTokenTransactionRepository transactionRepository;
+    @Autowired private DocumentCreditWalletRepository documentCreditWalletRepository;
+    @Autowired private DocumentCreditTransactionRepository documentCreditTransactionRepository;
 
     @Test
     void seedResetAndReseedUsesAnOwnerBoundTransactionLocalEscape() throws Exception {
@@ -184,6 +189,54 @@ class PostgresPaymentSystemDataResetIntegrationTest {
         mockMvc.perform(get(path)
                         .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void documentCreditResetUsesTheSameExactOwnerEscapeAndRestoresCleanly()
+            throws Exception {
+        String scenarioId = "payment-acceptance-v1";
+        String identityKey = "postgres-payment";
+        UUID ownerId = syntheticOwner(scenarioId, identityKey);
+        String owner = ownerId.toString();
+        String seedPath = "/internal/system-data/v2/runtime-owners/{scenarioId}"
+                + "/identities/{identityKey}/owners/{userId}/document-credit-wallet";
+        String ownerPath = "/internal/system-data/v1/runtime-owners/{scenarioId}"
+                + "/identities/{identityKey}/owners/{userId}";
+
+        mockMvc.perform(post(seedPath, scenarioId, identityKey, ownerId)
+                        .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.balanceDocumentCredits").value(2))
+                .andExpect(jsonPath("$.details.ledgerEntries").value(1));
+
+        assertAppendOnlyFailure(() -> transactionTemplate().executeWithoutResult(
+                ignored -> jdbcTemplate.update(
+                        "DELETE FROM document_credit_transactions WHERE user_id = ?", owner)));
+        assertAppendOnlyFailure(() -> transactionTemplate().executeWithoutResult(ignored -> {
+            setLocalResetOwner(uniqueOwner("different-document-owner"));
+            jdbcTemplate.update(
+                    "DELETE FROM document_credit_transactions WHERE user_id = ?", owner);
+        }));
+        assertAppendOnlyFailure(() -> transactionTemplate().executeWithoutResult(ignored -> {
+            setLocalResetOwner(owner);
+            jdbcTemplate.update(
+                    "UPDATE document_credit_transactions SET description = ? WHERE user_id = ?",
+                    "must fail", owner);
+        }));
+
+        mockMvc.perform(delete(ownerPath, scenarioId, identityKey, ownerId)
+                        .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recordsAffected").value(2));
+        assertThat(documentCreditWalletRepository.findByUserId(owner)).isEmpty();
+        assertThat(documentCreditTransactionRepository
+                .findByUserIdOrderBySequenceNumberAsc(owner)).isEmpty();
+
+        mockMvc.perform(post(seedPath, scenarioId, identityKey, ownerId)
+                        .header(EnvironmentDataGuard.TOKEN_HEADER, ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.balanceDocumentCredits").value(2))
+                .andExpect(jsonPath("$.details.ledgerEntries").value(1));
     }
 
     private org.springframework.test.web.servlet.ResultActions seed(
@@ -333,6 +386,14 @@ class PostgresPaymentSystemDataResetIntegrationTest {
 
     private String uniqueOwner(String prefix) {
         return prefix + "-" + UUID.randomUUID();
+    }
+
+    private UUID syntheticOwner(String scenarioId, String identityKey) {
+        return UUID.nameUUIDFromBytes(("job-seeker-copilot:system-data:"
+                + scenarioId
+                + ":"
+                + identityKey
+                + ":user").getBytes(StandardCharsets.UTF_8));
     }
 
     @FunctionalInterface

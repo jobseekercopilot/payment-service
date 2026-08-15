@@ -64,6 +64,7 @@ public class DocumentCreditService {
         } else {
             promotionStatus = PromotionResponse.Status.AVAILABLE;
         }
+        boolean promotionAvailable = promotionStatus == PromotionResponse.Status.AVAILABLE;
         return DocumentCreditCatalogResponse.builder()
                 .catalogVersion(properties.getCatalogVersion())
                 .currency(properties.getCurrency())
@@ -84,7 +85,7 @@ public class DocumentCreditService {
                                 .currency(properties.getCurrency())
                                 .fullApplicationEquivalent(plan.getDocumentCredits() / 2)
                                 .promotionBonusDocumentCredits(
-                                        promotionEnabled ? promotionBonus(plan.getDocumentCredits()) : 0)
+                                        promotionAvailable ? promotionBonus(plan.getDocumentCredits()) : 0)
                                 .active(plan.isActive())
                                 .sortOrder(plan.getSortOrder())
                                 .build())

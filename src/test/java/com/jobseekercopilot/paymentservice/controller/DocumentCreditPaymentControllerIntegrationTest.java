@@ -127,8 +127,45 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.plans[1].documentCredits").value(25))
                 .andExpect(jsonPath("$.plans[1].promotionBonusDocumentCredits").value(13))
                 .andExpect(jsonPath("$.plans[2].promotionBonusDocumentCredits").value(30))
+                .andExpect(jsonPath("$.promotion.enabled").value(true))
                 .andExpect(jsonPath("$.promotion.status").value("AVAILABLE"))
                 .andExpect(jsonPath("$.plans[0].tokenAmount").doesNotExist());
+    }
+
+    @Test
+    void exhaustedPromotionRemainsEnabledButAdvertisesNoPlanBonus() throws Exception {
+        FoundingPromotionCampaign campaign =
+                campaignRepository.findById("founding-200").orElseThrow();
+        campaign.setActiveReservations(campaign.getCustomerLimit());
+        campaign.setUpdatedAt(Instant.now());
+        campaignRepository.saveAndFlush(campaign);
+
+        mockMvc.perform(get("/api/v2/payments/catalog")
+                        .header(SERVICE_TOKEN, PAYMENT_GATEWAY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.promotion.enabled").value(true))
+                .andExpect(jsonPath("$.promotion.status").value("EXHAUSTED"))
+                .andExpect(jsonPath("$.plans[0].promotionBonusDocumentCredits").value(0))
+                .andExpect(jsonPath("$.plans[1].promotionBonusDocumentCredits").value(0))
+                .andExpect(jsonPath("$.plans[2].promotionBonusDocumentCredits").value(0));
+    }
+
+    @Test
+    void disabledPromotionIsDisabledAndAdvertisesNoPlanBonus() throws Exception {
+        FoundingPromotionCampaign campaign =
+                campaignRepository.findById("founding-200").orElseThrow();
+        campaign.setEnabled(false);
+        campaign.setUpdatedAt(Instant.now());
+        campaignRepository.saveAndFlush(campaign);
+
+        mockMvc.perform(get("/api/v2/payments/catalog")
+                        .header(SERVICE_TOKEN, PAYMENT_GATEWAY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.promotion.enabled").value(false))
+                .andExpect(jsonPath("$.promotion.status").value("DISABLED"))
+                .andExpect(jsonPath("$.plans[0].promotionBonusDocumentCredits").value(0))
+                .andExpect(jsonPath("$.plans[1].promotionBonusDocumentCredits").value(0))
+                .andExpect(jsonPath("$.plans[2].promotionBonusDocumentCredits").value(0));
     }
 
     @Test
