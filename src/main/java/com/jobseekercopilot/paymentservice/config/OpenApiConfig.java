@@ -31,10 +31,12 @@ public class OpenApiConfig {
                                         .description("Dedicated credential for isolated environment-data operations.")))
                 .info(new Info()
                         .title("Payment Service API")
-                        .description("Owns AI Credit wallets, transactions and reservations. Every payment API "
-                                + "operation requires an authorized service identity; owner-scoped operations "
-                                + "also require the trusted X-Payment-Owner context.")
-                        .version("3.1.0")
+                        .description("Owns append-only document-credit wallets, reservations, orders, "
+                                + "provider-event reconciliation and retained payment evidence. Legacy AI "
+                                + "Credit routes remain available during migration. Every payment API operation "
+                                + "requires an authorized service identity; owner-scoped operations also require "
+                                + "the trusted X-Payment-Owner context.")
+                        .version("3.2.0")
                         .contact(new Contact().name("Jobseeker Copilot"))
                         .license(new License().name("MIT")));
     }

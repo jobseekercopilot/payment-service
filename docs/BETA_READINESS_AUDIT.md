@@ -1,4 +1,8 @@
-# Payment Service beta-readiness audit
+# Payment Service beta-readiness audit (historical snapshot)
+
+This 2026-07-23 audit predates the document-credit, owned-order, verified
+webhook and lifecycle work. See `PUBLIC_BETA_DOCUMENT_CREDITS.md` for the
+current release contract and remaining legal/release decisions.
 
 Audit date: 2026-07-23  
 Decision: **Not ready for private beta**

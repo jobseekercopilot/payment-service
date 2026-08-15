@@ -10,6 +10,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(PaymentApiException.class)
+    ResponseEntity<ErrorResponse> paymentApi(PaymentApiException exception) {
+        return ResponseEntity.status(exception.getStatus()).body(ErrorResponse.builder()
+                .status(exception.getStatus().value())
+                .code(exception.getCode())
+                .message(exception.getMessage())
+                .timestamp(LocalDateTime.now())
+                .build());
+    }
+
     @ExceptionHandler(BadRequestException.class)
     ResponseEntity<ErrorResponse> badRequest(BadRequestException exception) {
         return ResponseEntity.badRequest().body(ErrorResponse.builder()

@@ -15,6 +15,7 @@ public class LedgerStartupVerifier implements ApplicationRunner {
 
     private final PaymentProperties paymentProperties;
     private final LedgerReconciliationService reconciliationService;
+    private final DocumentCreditLedgerReconciliationService documentCreditReconciliationService;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -24,5 +25,8 @@ public class LedgerStartupVerifier implements ApplicationRunner {
         }
         int walletCount = reconciliationService.verifyAllOrThrow();
         log.info("AI Credit ledger startup reconciliation passed walletCount={}", walletCount);
+        int documentWalletCount = documentCreditReconciliationService.verifyAllOrThrow();
+        log.info("Document-credit ledger startup reconciliation passed walletCount={}",
+                documentWalletCount);
     }
 }
