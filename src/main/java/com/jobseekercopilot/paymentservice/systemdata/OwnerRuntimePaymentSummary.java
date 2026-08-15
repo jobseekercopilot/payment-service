@@ -3,23 +3,36 @@ package com.jobseekercopilot.paymentservice.systemdata;
 import java.util.Map;
 
 public record OwnerRuntimePaymentSummary(
-        int wallets,
+        int legacyWallets,
+        int documentCreditWallets,
         int ledgerEntries,
         int reservations,
-        long balanceTokens) {
+        long balanceTokens,
+        int balanceDocumentCredits,
+        int orders,
+        int providerEvents,
+        int promotionReservations) {
 
     public int total() {
-        return wallets + ledgerEntries + reservations;
+        return legacyWallets + documentCreditWallets + ledgerEntries
+                + reservations + orders + providerEvents + promotionReservations;
     }
 
     public Map<String, Object> details(String scenarioId, String identityKey) {
-        return Map.of(
-                "scenarioId", scenarioId,
-                "identityKey", identityKey,
-                "walletExists", wallets == 1,
-                "wallets", wallets,
-                "balanceTokens", balanceTokens,
-                "ledgerEntries", ledgerEntries,
-                "reservations", reservations);
+        Map<String, Object> details = new java.util.LinkedHashMap<>();
+        details.put("scenarioId", scenarioId);
+        details.put("identityKey", identityKey);
+        details.put("walletExists", legacyWallets + documentCreditWallets > 0);
+        details.put("wallets", legacyWallets + documentCreditWallets);
+        details.put("legacyWallets", legacyWallets);
+        details.put("documentCreditWallets", documentCreditWallets);
+        details.put("balanceTokens", balanceTokens);
+        details.put("balanceDocumentCredits", balanceDocumentCredits);
+        details.put("ledgerEntries", ledgerEntries);
+        details.put("reservations", reservations);
+        details.put("orders", orders);
+        details.put("providerEvents", providerEvents);
+        details.put("promotionReservations", promotionReservations);
+        return Map.copyOf(details);
     }
 }

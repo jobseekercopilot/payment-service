@@ -4,16 +4,19 @@
 
 | Role | Called by | Calls | Data | Local port |
 |---|---|---|---|---:|
-| System of record for AI-credit wallets, append-only transactions and reservations | Payment/Stripe gateways, Document Generation, CV/Cover Letter | None | Own PostgreSQL database | 8099 |
+| System of record for document-credit wallets, append-only transactions, reservations and payment orders | Payment/Stripe gateways, Document Generation, CV/Cover Letter, Account Lifecycle | Stripe Gateway (Checkout-session lifecycle only) | Own PostgreSQL database | 8099 |
 
 See the central [payment journey/status](https://docs.jobseekercopilot.com/journeys/reporting-payments/), [payment domain model](https://docs.jobseekercopilot.com/data/domain-models/), and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
 
-Spring Boot service for the inherited Job Seeker Copilot AI Credit wallet,
-transaction and reservation model.
+Spring Boot service for the Job Seeker Copilot document-credit wallet,
+transaction, reservation and owned payment-order model. The inherited AI-token
+ledger remains available for migration and backward compatibility only.
 
-This repository contains the migrated PostgreSQL AI Credit ledger foundation. The
-larger payment system is not yet beta-ready. See
-[`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
+See [`docs/PUBLIC_BETA_DOCUMENT_CREDITS.md`](docs/PUBLIC_BETA_DOCUMENT_CREDITS.md)
+for the current public-beta commercial contract, release gates, reconciliation
+and account-lifecycle runbook. The older
+[`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md) is retained as a
+historical audit snapshot.
 
 ## Build
 
@@ -26,8 +29,8 @@ mvn -B clean verify
 Production requires PostgreSQL 15, verified TLS, reviewed Flyway migrations and
 startup reconciliation. H2 is test-only. Wallet and reservation concurrency are
 database-controlled; abandoned holds expire and are reconciled with durable
-evidence. Stripe fulfillment and the remaining operational controls are still
-not suitable for payment traffic.
+evidence. Stripe LIVE mode and Checkout remain fail-closed until explicit,
+coordinated release configuration is supplied.
 
 See [`docs/AI_CREDIT_LEDGER.md`](docs/AI_CREDIT_LEDGER.md) for the schema,
 signed-entry semantics and correction rules. See
@@ -49,9 +52,12 @@ mvn -B --no-transfer-progress clean verify
 See [`docs/CONTRACT_GOVERNANCE.md`](docs/CONTRACT_GOVERNANCE.md) for ownership,
 versioning and consumer-pin rules.
 
-Contract version 3.1.0 adds the isolated-E2E-only runtime-owner cleanup and
-verification boundary for deterministic named-state identities. Existing
-public Payment and fixture operations remain compatible.
+Contract version 3.2.1 adds provider-confirmed Checkout expiry, two-phase
+account revocation and the `REVOCATION_PENDING` wallet lifecycle state to the
+3.2.0 document-credit catalog, wallet, order, provider-event and
+account-lifecycle boundaries. Existing v1 Payment and
+fixture operations remain compatible but cannot mutate commercial value in
+production through demo or legacy Stripe confirmation routes.
 
 The full test suite needs a Docker-compatible runtime because it proves the
 ledger against PostgreSQL 15, including dump/restore and append-only enforcement.

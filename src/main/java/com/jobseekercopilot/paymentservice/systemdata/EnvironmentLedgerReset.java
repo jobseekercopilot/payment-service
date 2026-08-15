@@ -51,6 +51,67 @@ public class EnvironmentLedgerReset {
         });
     }
 
+    /**
+     * Removes the v2 payment aggregate for one deterministic owner in an
+     * isolated environment-data database. The database trigger accepts the
+     * document-credit ledger delete only while the same transaction-local,
+     * exact-owner guard used by the legacy ledger is present.
+     */
+    public DocumentCreditResetCounts deleteOwnerDocumentCreditData(String ownerId) {
+        guard.requireEnabled();
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException(
+                    "Environment document-credit reset requires an active transaction");
+        }
+        if (!StringUtils.hasText(ownerId)) {
+            throw new IllegalArgumentException(
+                    "Environment document-credit reset owner is required");
+        }
+        return jdbcTemplate.execute((ConnectionCallback<DocumentCreditResetCounts>) connection -> {
+            String databaseProduct = connection.getMetaData().getDatabaseProductName();
+            if ("PostgreSQL".equals(databaseProduct)) {
+                setTransactionLocalOwner(connection, ownerId);
+            } else if (!"H2".equals(databaseProduct)) {
+                throw new SQLException(
+                        "Environment document-credit reset is unsupported for database product "
+                                + databaseProduct);
+            }
+            int providerEvents = delete(connection,
+                    "DELETE FROM payment_provider_events WHERE order_id IN "
+                            + "(SELECT id FROM payment_orders WHERE user_id = ?)", ownerId);
+            int promotionReservations = delete(connection,
+                    "DELETE FROM founding_promotion_reservations WHERE user_id = ?", ownerId);
+            int orders = delete(connection,
+                    "DELETE FROM payment_orders WHERE user_id = ?", ownerId);
+            int reservations = delete(connection,
+                    "DELETE FROM document_credit_reservations WHERE user_id = ?", ownerId);
+            int transactions = delete(connection,
+                    "DELETE FROM document_credit_transactions WHERE user_id = ?", ownerId);
+            int wallets = delete(connection,
+                    "DELETE FROM document_credit_wallets WHERE user_id = ?", ownerId);
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE founding_promotion_campaigns campaign SET "
+                            + "active_reservations = (SELECT COUNT(*) FROM founding_promotion_reservations "
+                            + "WHERE campaign_id = campaign.id AND status = 'RESERVED'), "
+                            + "completed_claims = (SELECT COUNT(*) FROM founding_promotion_reservations "
+                            + "WHERE campaign_id = campaign.id AND status = 'COMPLETED'), "
+                            + "updated_at = CURRENT_TIMESTAMP")) {
+                statement.executeUpdate();
+            }
+            return new DocumentCreditResetCounts(
+                    wallets, transactions, reservations, orders,
+                    providerEvents, promotionReservations);
+        });
+    }
+
+    private int delete(Connection connection, String sql, String ownerId)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, ownerId);
+            return statement.executeUpdate();
+        }
+    }
+
     private void setTransactionLocalOwner(Connection connection, String ownerId)
             throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
@@ -62,6 +123,19 @@ public class EnvironmentLedgerReset {
                             "Could not establish transaction-local environment reset owner");
                 }
             }
+        }
+    }
+
+    public record DocumentCreditResetCounts(
+            int wallets,
+            int ledgerEntries,
+            int reservations,
+            int orders,
+            int providerEvents,
+            int promotionReservations) {
+        public int total() {
+            return wallets + ledgerEntries + reservations + orders
+                    + providerEvents + promotionReservations;
         }
     }
 }

@@ -76,8 +76,11 @@ public class PaymentService {
     }
 
     public DemoPurchaseResponse demoPurchase(String userId, String pricingPlanId) {
+        if (!paymentProperties.isDemoPurchaseEnabled()) {
+            throw new BadRequestException("Demo purchases are disabled in this environment");
+        }
         long startedAt = System.nanoTime();
-        PaymentProperties.PricingPlan plan = paymentProperties.activePricingPlan(pricingPlanId)
+        PaymentProperties.PricingPlan plan = paymentProperties.legacyActivePricingPlan(pricingPlanId)
                 .orElseThrow(() -> new BadRequestException("Unknown or inactive pricing plan: " + pricingPlanId));
         walletProvisioner.ensureWallet(userId);
         return ledgerTransactionExecutor.execute(() -> {
@@ -116,11 +119,14 @@ public class PaymentService {
     public DemoPurchaseResponse confirmStripePurchase(
             String authenticatedOwner,
             ConfirmStripePurchaseRequest request) {
+        if (!paymentProperties.isLegacyStripeConfirmationEnabled()) {
+            throw new BadRequestException("Legacy Stripe confirmation is disabled");
+        }
         long startedAt = System.nanoTime();
         if (!authenticatedOwner.equals(request.getUserId())) {
             throw new BadRequestException("Payment owner does not match authenticated context");
         }
-        PaymentProperties.PricingPlan plan = paymentProperties.activePricingPlan(request.getPricingPlanId())
+        PaymentProperties.PricingPlan plan = paymentProperties.legacyActivePricingPlan(request.getPricingPlanId())
                 .orElseThrow(() -> new BadRequestException(
                         "Unknown or inactive pricing plan: " + request.getPricingPlanId()));
         if (plan.getTokenAmount() != request.getTokenAmount()) {
@@ -716,9 +722,13 @@ public class PaymentService {
     }
 
     private TokenPricingPlanResponse mapPlan(PaymentProperties.PricingPlan plan) {
+        String legacyId = "active".equals(plan.getId()) ? "standard" : plan.getId();
+        String legacyName = "active".equals(plan.getId())
+                ? "Standard"
+                : "power".equals(plan.getId()) ? "Pro" : plan.getName();
         return TokenPricingPlanResponse.builder()
-                .id(plan.getId())
-                .name(plan.getName())
+                .id(legacyId)
+                .name(legacyName)
                 .description(plan.getDescription())
                 .tokenAmount(plan.getTokenAmount())
                 .priceGbpPence(plan.getPriceGbpPence())

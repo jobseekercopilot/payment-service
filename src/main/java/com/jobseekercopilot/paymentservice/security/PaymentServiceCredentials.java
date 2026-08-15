@@ -3,6 +3,7 @@ package com.jobseekercopilot.paymentservice.security;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -13,24 +14,42 @@ public final class PaymentServiceCredentials {
     private final String documentGenerationGatewayToken;
     private final String cvCoverLetterToken;
     private final String stripeGatewayToken;
+    private final String accountLifecycleToken;
 
+    PaymentServiceCredentials(
+            String paymentGatewayToken,
+            String documentGenerationGatewayToken,
+            String cvCoverLetterToken,
+            String stripeGatewayToken) {
+        this(paymentGatewayToken,
+                documentGenerationGatewayToken,
+                cvCoverLetterToken,
+                stripeGatewayToken,
+                "account-lifecycle-compatibility-token-000001");
+    }
+
+    @Autowired
     public PaymentServiceCredentials(
             @Value("${payment.security.payment-gateway-token}") String paymentGatewayToken,
             @Value("${payment.security.document-generation-gateway-token}")
             String documentGenerationGatewayToken,
             @Value("${payment.security.cv-cover-letter-token}") String cvCoverLetterToken,
-            @Value("${payment.security.stripe-gateway-token}") String stripeGatewayToken) {
+            @Value("${payment.security.stripe-gateway-token}") String stripeGatewayToken,
+            @Value("${payment.security.account-lifecycle-token}") String accountLifecycleToken) {
         this.paymentGatewayToken = validate(paymentGatewayToken, "Payment Gateway service token");
         this.documentGenerationGatewayToken = validate(
                 documentGenerationGatewayToken,
                 "Document Generation Gateway service token");
         this.cvCoverLetterToken = validate(cvCoverLetterToken, "CV and Cover Letter service token");
         this.stripeGatewayToken = validate(stripeGatewayToken, "Stripe Gateway service token");
+        this.accountLifecycleToken = validate(
+                accountLifecycleToken, "Account Lifecycle service token");
         requireDistinct(
                 this.paymentGatewayToken,
                 this.documentGenerationGatewayToken,
                 this.cvCoverLetterToken,
-                this.stripeGatewayToken);
+                this.stripeGatewayToken,
+                this.accountLifecycleToken);
     }
 
     public PaymentCaller authenticate(String supplied) {
@@ -45,6 +64,9 @@ public final class PaymentServiceCredentials {
         }
         if (matches(supplied, stripeGatewayToken)) {
             return PaymentCaller.STRIPE_GATEWAY;
+        }
+        if (matches(supplied, accountLifecycleToken)) {
+            return PaymentCaller.ACCOUNT_LIFECYCLE;
         }
         return null;
     }
