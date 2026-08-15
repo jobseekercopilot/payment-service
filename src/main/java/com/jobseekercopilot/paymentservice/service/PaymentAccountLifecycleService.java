@@ -37,7 +37,7 @@ public class PaymentAccountLifecycleService {
     private final ProviderSessionExpiryReconciliationService providerSessionReconciliation;
 
     public AccountPaymentLifecycleResponse revokeAccess(String owner) {
-        AccountPaymentLifecycleResponse result = documentCreditService.revokeAccess(owner);
+        documentCreditService.beginAccessRevocation(owner);
         PaymentOrderService.CheckoutRevocationResult checkout =
                 paymentOrderService.revokeOpenCheckoutAccess(owner);
         providerSessionReconciliation.reconcile(owner, checkout.providerSessionsToExpire());
@@ -47,9 +47,13 @@ public class PaymentAccountLifecycleService {
             throw new PaymentApiException(
                     HttpStatus.SERVICE_UNAVAILABLE,
                     "PROVIDER_SESSION_EXPIRY_PENDING",
-                    "Payment access is revoked; provider Checkout expiry will be retried.");
+                    "Payment access is blocked; provider Checkout terminal confirmation will be retried.");
         }
-        result.setCheckoutOrdersRevoked(checkout.revokedOrders());
+        paymentOrderService.requireNoAccountRevocationBlockers(owner);
+        AccountPaymentLifecycleResponse result =
+                documentCreditService.finalizeAccessRevocation(owner);
+        result.setCheckoutOrdersRevoked(Math.addExact(
+                checkout.revokedOrders(), checkout.providerSessionsToExpire().size()));
         result.setProviderSessionsRequireExpiry(false);
         result.setProviderCheckoutSessionsToExpire(List.of());
         return result;

@@ -53,7 +53,7 @@ payment:
     enabled: ${PAYMENT_CHECKOUT_ENABLED:false}
     release-authorised: ${PAYMENT_CHECKOUT_RELEASE_AUTHORISED:false}
     provider-live-mode-expected: ${PAYMENT_PROVIDER_LIVE_MODE_EXPECTED:false}
-    order-ttl: ${PAYMENT_CHECKOUT_ORDER_TTL:PT30M}
+    order-ttl: ${PAYMENT_CHECKOUT_ORDER_TTL:PT1H}
   consumer-terms:
     version: ${PAYMENT_CONSUMER_TERMS_VERSION:uk-consumer-terms-2026-08-15}
   legal-entity:

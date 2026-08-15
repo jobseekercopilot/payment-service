@@ -1,5 +1,6 @@
 package com.jobseekercopilot.paymentservice.config;
 
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -68,6 +69,17 @@ class PaymentCommercialConfigurationVerifierTest {
                         new DefaultApplicationArguments(new String[0])))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("invalid format");
+    }
+
+    @Test
+    void checkoutOrderWindowLeavesTimeForStripesMinimumSessionLifetime() {
+        PaymentProperties properties = approvedProperties();
+        properties.getCheckout().setOrderTtl(Duration.ofMinutes(30));
+
+        assertThatThrownBy(() -> verifier(properties, new MockEnvironment()).run(
+                        new DefaultApplicationArguments(new String[0])))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("between 1 and 24 hours");
     }
 
     private PaymentCommercialConfigurationVerifier verifier(

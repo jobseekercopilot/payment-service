@@ -51,5 +51,5 @@ public class StripeLifecycleClient {
     }
 
     public record StripeExpiryResponse(
-            UUID orderId, String providerSessionId, String status) {}
+            UUID orderId, String providerSessionId, String status, String paymentStatus) {}
 }

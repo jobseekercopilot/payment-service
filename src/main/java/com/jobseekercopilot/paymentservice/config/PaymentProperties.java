@@ -99,7 +99,7 @@ public class PaymentProperties {
         private boolean enabled;
         private boolean releaseAuthorised;
         private boolean providerLiveModeExpected;
-        private Duration orderTtl = Duration.ofMinutes(30);
+        private Duration orderTtl = Duration.ofHours(1);
     }
 
     @Data

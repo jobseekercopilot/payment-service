@@ -52,8 +52,10 @@ mvn -B --no-transfer-progress clean verify
 See [`docs/CONTRACT_GOVERNANCE.md`](docs/CONTRACT_GOVERNANCE.md) for ownership,
 versioning and consumer-pin rules.
 
-Contract version 3.2.0 adds the document-credit catalog, wallet, order,
-provider-event and account-lifecycle boundaries. Existing v1 Payment and
+Contract version 3.2.1 adds provider-confirmed Checkout expiry, two-phase
+account revocation and the `REVOCATION_PENDING` wallet lifecycle state to the
+3.2.0 document-credit catalog, wallet, order, provider-event and
+account-lifecycle boundaries. Existing v1 Payment and
 fixture operations remain compatible but cannot mutate commercial value in
 production through demo or legacy Stripe confirmation routes.
 

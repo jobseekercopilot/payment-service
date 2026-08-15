@@ -21,7 +21,7 @@ done
 jq -e '
     . as $root |
     (.openapi | type == "string" and startswith("3.")) and
-    (.info.version == "3.2.0") and
+    (.info.version == "3.2.1") and
     (.components.securitySchemes.serviceToken
         | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
     (.components.securitySchemes.environmentDataToken

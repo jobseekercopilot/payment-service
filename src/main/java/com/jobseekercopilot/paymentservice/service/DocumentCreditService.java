@@ -261,9 +261,31 @@ public class DocumentCreditService {
     }
 
     @Transactional
-    public AccountPaymentLifecycleResponse revokeAccess(String owner) {
+    public void beginAccessRevocation(String owner) {
         provisioner.ensureWallet(owner);
         DocumentCreditWallet wallet = walletRepository.findByUserIdForUpdate(owner).orElseThrow();
+        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOKED
+                || wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOCATION_PENDING) {
+            return;
+        }
+        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.BLOCKED_REVIEW
+                || wallet.getReviewDebtCredits() > 0) {
+            throw api(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT_FINANCIAL_REVIEW_REQUIRED",
+                    "Account deletion is waiting for payment review to be completed.");
+        }
+        wallet.setLifecycleStatus(DocumentCreditWalletStatus.REVOCATION_PENDING);
+        walletRepository.save(wallet);
+    }
+
+    @Transactional
+    public AccountPaymentLifecycleResponse finalizeAccessRevocation(String owner) {
+        provisioner.ensureWallet(owner);
+        DocumentCreditWallet wallet = walletRepository.findByUserIdForUpdate(owner).orElseThrow();
+        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.BLOCKED_REVIEW
+                || wallet.getReviewDebtCredits() > 0) {
+            throw api(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT_FINANCIAL_REVIEW_REQUIRED",
+                    "Account deletion is waiting for payment review to be completed.");
+        }
         for (DocumentCreditReservation reservation : reservationRepository.findByUserIdAndStatus(
                 owner, DocumentCreditReservationStatus.RESERVED)) {
             releaseLocked(reservation, wallet, "Account access revoked before document delivery");
@@ -319,7 +341,8 @@ public class DocumentCreditService {
     }
 
     private void requireSpendable(DocumentCreditWallet wallet) {
-        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOKED) {
+        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOKED
+                || wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOCATION_PENDING) {
             throw api(HttpStatus.FORBIDDEN, "PAYMENT_ACCESS_REVOKED",
                     "Payment and document-credit access has been revoked for this account.");
         }

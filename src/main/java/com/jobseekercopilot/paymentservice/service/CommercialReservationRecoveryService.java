@@ -21,8 +21,7 @@ public class CommercialReservationRecoveryService {
     private static final Logger log =
             LoggerFactory.getLogger(CommercialReservationRecoveryService.class);
     private static final List<PaymentOrderStatus> EXPIRABLE_ORDER_STATUSES = List.of(
-            PaymentOrderStatus.PENDING_CHECKOUT,
-            PaymentOrderStatus.CHECKOUT_OPEN);
+            PaymentOrderStatus.PENDING_CHECKOUT);
 
     private final DocumentCreditReservationRepository reservationRepository;
     private final PaymentOrderRepository orderRepository;

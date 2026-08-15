@@ -410,9 +410,12 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .with(identity(ACCOUNT_LIFECYCLE, owner)))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("PROVIDER_SESSION_EXPIRY_PENDING"));
-        org.assertj.core.api.Assertions.assertThat(orderRepository.findById(
-                        java.util.UUID.fromString(orderId)).orElseThrow().getManualReviewReason())
-                .isEqualTo("ACCOUNT_ACCESS_REVOKED_PROVIDER_EXPIRY_PENDING");
+        PaymentOrder providerPending = orderRepository.findById(
+                java.util.UUID.fromString(orderId)).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(providerPending.getStatus().name())
+                .isEqualTo("CHECKOUT_OPEN");
+        org.assertj.core.api.Assertions.assertThat(providerPending.getManualReviewReason())
+                .isNull();
 
         when(stripeLifecycleClient.expire(eq(owner), any())).thenReturn(true);
         providerSessionReconciliation.recoverPendingProviderSessions();
@@ -435,6 +438,146 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .content(checkoutRequest("starter")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("PAYMENT_ACCESS_REVOKED"));
+    }
+
+    @Test
+    void providerCompleteDuringDeletionRemainsBlockedUntilSignedSettlementIsRecorded()
+            throws Exception {
+        String owner = "owner-delete-provider-complete";
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", "delete-complete-checkout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(orderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_delete_complete\"}"))
+                .andExpect(status().isOk());
+
+        // A false result includes a provider-confirmed COMPLETE session. It is not expiry evidence.
+        when(stripeLifecycleClient.expire(eq(owner), any())).thenReturn(false);
+        mockMvc.perform(post("/internal/v2/payments/owners/{owner}/revoke-access", owner)
+                        .with(identity(ACCOUNT_LIFECYCLE, owner)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("PROVIDER_SESSION_EXPIRY_PENDING"));
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow()
+                                .getLifecycleStatus().name())
+                .isEqualTo("REVOCATION_PENDING");
+
+        String signedCompletion = settledEvent(
+                "evt_delete_complete", orderId, "cs_test_delete_complete", "pi_delete", "GB")
+                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799");
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(signedCompletion))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome")
+                        .value("PAID_DURING_REVOCATION_REVIEW"))
+                .andExpect(jsonPath("$.orderStatus").value("MANUAL_REVIEW"))
+                .andExpect(jsonPath("$.grantedDocumentCredits").value(0));
+
+        mockMvc.perform(post("/internal/v2/payments/owners/{owner}/revoke-access", owner)
+                        .with(identity(ACCOUNT_LIFECYCLE, owner)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code")
+                        .value("PAYMENT_FINANCIAL_RECONCILIATION_PENDING"));
+        PaymentOrder reviewed = orderRepository.findById(
+                java.util.UUID.fromString(orderId)).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(reviewed.getManualReviewReason())
+                .isEqualTo("PAID_DURING_ACCOUNT_REVOCATION_REFUND_REQUIRED");
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow().getBalanceCredits())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void signedExpiryDuringDeletionClearsTheProviderBlockBeforeFinalRevocation()
+            throws Exception {
+        String owner = "owner-delete-signed-expiry";
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", "delete-signed-expiry")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(orderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_delete_signed_expiry\"}"))
+                .andExpect(status().isOk());
+        when(stripeLifecycleClient.expire(eq(owner), any())).thenReturn(false);
+        mockMvc.perform(post("/internal/v2/payments/owners/{owner}/revoke-access", owner)
+                        .with(identity(ACCOUNT_LIFECYCLE, owner)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("PROVIDER_SESSION_EXPIRY_PENDING"));
+
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(expiredEvent(
+                                "evt_delete_signed_expiry", orderId,
+                                "cs_test_delete_signed_expiry")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("ORDER_EXPIRED"));
+
+        mockMvc.perform(post("/internal/v2/payments/owners/{owner}/revoke-access", owner)
+                        .with(identity(ACCOUNT_LIFECYCLE, owner)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACCESS_REVOKED_RECORDS_RETAINED"))
+                .andExpect(jsonPath("$.providerSessionsRequireExpiry").value(false));
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow()
+                                .getLifecycleStatus().name())
+                .isEqualTo("REVOKED");
+    }
+
+    @Test
+    void completedPurchaseBeforeDeletionIsHistoricalAndDoesNotStrandNewCredits()
+            throws Exception {
+        String owner = "owner-paid-before-delete";
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", "paid-before-delete")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(orderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_paid_before_delete\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(settledEvent(
+                                "evt_paid_before_delete", orderId,
+                                "cs_test_paid_before_delete", "pi_paid_before_delete", "GB")
+                                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("FULFILLED"));
+
+        mockMvc.perform(post("/internal/v2/payments/owners/{owner}/revoke-access", owner)
+                        .with(identity(ACCOUNT_LIFECYCLE, owner)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACCESS_REVOKED_RECORDS_RETAINED"));
+        org.assertj.core.api.Assertions.assertThat(
+                        orderRepository.findById(java.util.UUID.fromString(orderId))
+                                .orElseThrow().getStatus().name())
+                .isEqualTo("FULFILLED");
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow()
+                                .getLifecycleStatus().name())
+                .isEqualTo("REVOKED");
     }
 
     @Test
@@ -522,6 +665,175 @@ class DocumentCreditPaymentControllerIntegrationTest {
         org.assertj.core.api.Assertions.assertThat(
                 campaignRepository.findById("founding-200").orElseThrow().getActiveReservations())
                 .isZero();
+    }
+
+    @Test
+    void boundCheckoutIsNeverClockExpiredAndSignedCompletionWinsBeforeProviderExpiry()
+            throws Exception {
+        String owner = "owner-bound-expiry-ordering";
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", "bound-expiry-ordering")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(orderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_expiry_ordering\"}"))
+                .andExpect(status().isOk());
+        PaymentOrder elapsed = orderRepository.findById(
+                java.util.UUID.fromString(orderId)).orElseThrow();
+        elapsed.setExpiresAt(Instant.now().minusSeconds(1));
+        orderRepository.saveAndFlush(elapsed);
+
+        CommercialReservationRecoveryService.RecoveryResult localRecovery =
+                commercialRecoveryService.reconcileExpiredCommercialReservations(Instant.now());
+        org.assertj.core.api.Assertions.assertThat(localRecovery.expiredPaymentOrders()).isZero();
+        org.assertj.core.api.Assertions.assertThat(orderRepository.findById(elapsed.getId())
+                        .orElseThrow().getStatus().name())
+                .isEqualTo("CHECKOUT_OPEN");
+
+        // A provider that reports non-expired (including COMPLETE) leaves the order open.
+        when(stripeLifecycleClient.expire(eq(owner), any())).thenReturn(false);
+        providerSessionReconciliation.recoverPendingProviderSessions();
+        org.assertj.core.api.Assertions.assertThat(orderRepository.findById(elapsed.getId())
+                        .orElseThrow().getStatus().name())
+                .isEqualTo("CHECKOUT_OPEN");
+
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(settledEvent(
+                                "evt_expiry_ordering_paid", orderId,
+                                "cs_test_expiry_ordering", "pi_expiry_ordering", "GB")
+                                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("FULFILLED"))
+                .andExpect(jsonPath("$.grantedDocumentCredits").value(15));
+
+        // A delayed, valid expiry webhook cannot regress a durably fulfilled order.
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(expiredEvent(
+                                "evt_expiry_ordering_late", orderId,
+                                "cs_test_expiry_ordering")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("TERMINAL_ORDER_UNCHANGED"))
+                .andExpect(jsonPath("$.orderStatus").value("FULFILLED"));
+    }
+
+    @Test
+    void providerConfirmedOrSignedExpiryReleasesBoundCheckoutExactlyOnce()
+            throws Exception {
+        String providerOwner = "owner-provider-expiry";
+        String providerOrderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(providerOwner))
+                        .header("Idempotency-Key", "provider-expiry")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String providerOrderId = objectMapper.readTree(providerOrderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", providerOrderId)
+                        .with(stripeGateway(providerOwner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_provider_expired\"}"))
+                .andExpect(status().isOk());
+        PaymentOrder elapsed = orderRepository.findById(
+                java.util.UUID.fromString(providerOrderId)).orElseThrow();
+        elapsed.setExpiresAt(Instant.now().minusSeconds(1));
+        orderRepository.saveAndFlush(elapsed);
+        when(stripeLifecycleClient.expire(eq(providerOwner), any())).thenReturn(true);
+        providerSessionReconciliation.recoverPendingProviderSessions();
+        providerSessionReconciliation.recoverPendingProviderSessions();
+        org.assertj.core.api.Assertions.assertThat(orderRepository.findById(elapsed.getId())
+                        .orElseThrow().getStatus().name())
+                .isEqualTo("EXPIRED");
+
+        String signedOwner = "owner-signed-expiry";
+        String signedOrderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(signedOwner))
+                        .header("Idempotency-Key", "signed-expiry")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String signedOrderId = objectMapper.readTree(signedOrderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", signedOrderId)
+                        .with(stripeGateway(signedOwner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"cs_test_signed_expired\"}"))
+                .andExpect(status().isOk());
+        String signedExpiry = expiredEvent(
+                "evt_signed_expired", signedOrderId, "cs_test_signed_expired");
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(signedExpiry))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("ORDER_EXPIRED"));
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(signedExpiry))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("ORDER_EXPIRED"))
+                .andExpect(jsonPath("$.grantedDocumentCredits").value(0));
+    }
+
+    @Test
+    void reversalAggregateNeverRegressesAndDisputeHasPrecedence() throws Exception {
+        String disputedOrder = createAndFulfilOrder(
+                "owner-dispute-ordering", "active", "dispute-ordering",
+                "cs_test_dispute_ordering", "pi_dispute_ordering");
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(reversalEvent(
+                                "evt_partial_before_dispute", "charge.refunded",
+                                disputedOrder, "pi_dispute_ordering", 800)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("PARTIALLY_REFUNDED"));
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(reversalEvent(
+                                "evt_dispute_after_partial", "charge.dispute.created",
+                                disputedOrder, "pi_dispute_ordering", 1699)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("DISPUTED"));
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(reversalEvent(
+                                "evt_refund_after_dispute", "charge.refunded",
+                                disputedOrder, "pi_dispute_ordering", 1699)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("DISPUTED"));
+
+        String refundedOrder = createAndFulfilOrder(
+                "owner-refund-ordering", "starter", "refund-ordering",
+                "cs_test_refund_ordering", "pi_refund_ordering");
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(reversalEvent(
+                                "evt_full_refund_first", "charge.refunded",
+                                refundedOrder, "pi_refund_ordering", 799)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("REFUNDED"));
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(reversalEvent(
+                                "evt_stale_partial_refund", "charge.refunded",
+                                refundedOrder, "pi_refund_ordering", 300)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("REFUNDED"));
     }
 
     @Test
@@ -617,6 +929,74 @@ class DocumentCreditPaymentControllerIntegrationTest {
         } catch (Exception failure) {
             throw new RuntimeException(failure);
         }
+    }
+
+    private String createAndFulfilOrder(
+            String owner,
+            String plan,
+            String idempotencyKey,
+            String sessionId,
+            String paymentIntentId) throws Exception {
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest(plan)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String orderId = objectMapper.readTree(orderJson).path("orderId").asText();
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"" + sessionId + "\"}"))
+                .andExpect(status().isOk());
+        String completion = settledEvent(
+                "evt_complete_" + idempotencyKey,
+                orderId,
+                sessionId,
+                paymentIntentId,
+                "GB");
+        if ("starter".equals(plan)) {
+            completion = completion.replace(
+                    "\"amountTotalMinor\":1699", "\"amountTotalMinor\":799");
+        }
+        mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
+                        .header(SERVICE_TOKEN, STRIPE_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(completion))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderStatus").value("FULFILLED"));
+        return orderId;
+    }
+
+    private String expiredEvent(String eventId, String orderId, String sessionId)
+            throws Exception {
+        return objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("providerEventId", eventId)
+                .put("eventType", "checkout.session.expired")
+                .put("payloadSha256", "e".repeat(64))
+                .put("orderId", orderId)
+                .put("stripeSessionId", sessionId)
+                .put("liveMode", false)
+                .put("eventCreatedAt", Instant.now().toString()));
+    }
+
+    private String reversalEvent(
+            String eventId,
+            String eventType,
+            String orderId,
+            String paymentIntentId,
+            long amountMinor) throws Exception {
+        return objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("providerEventId", eventId)
+                .put("eventType", eventType)
+                .put("payloadSha256", "f".repeat(64))
+                .put("orderId", orderId)
+                .put("paymentIntentId", paymentIntentId)
+                .put("currency", "GBP")
+                .put("liveMode", false)
+                .put("reversalAmountMinor", amountMinor)
+                .put("eventCreatedAt", Instant.now().toString()));
     }
 
     private String checkoutRequest(String plan) {

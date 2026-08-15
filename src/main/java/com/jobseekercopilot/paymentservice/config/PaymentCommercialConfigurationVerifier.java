@@ -59,9 +59,9 @@ public class PaymentCommercialConfigurationVerifier implements ApplicationRunner
         }
         Duration ttl = properties.getCheckout().getOrderTtl();
         if (ttl == null || ttl.isNegative() || ttl.isZero()
-                || ttl.compareTo(Duration.ofMinutes(30)) < 0
+                || ttl.compareTo(Duration.ofHours(1)) < 0
                 || ttl.compareTo(Duration.ofHours(24)) > 0) {
-            throw new IllegalStateException("Checkout order TTL must be between 30 minutes and 24 hours");
+            throw new IllegalStateException("Checkout order TTL must be between 1 and 24 hours");
         }
     }
 

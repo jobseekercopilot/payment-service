@@ -217,8 +217,7 @@ public class PaymentOrderService {
     public boolean reconcileExpiredOrder(UUID orderId, Instant reconciliationTime) {
         PaymentOrder order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null
-                || (order.getStatus() != PaymentOrderStatus.PENDING_CHECKOUT
-                        && order.getStatus() != PaymentOrderStatus.CHECKOUT_OPEN)
+                || order.getStatus() != PaymentOrderStatus.PENDING_CHECKOUT
                 || order.getExpiresAt().isAfter(reconciliationTime)) {
             return false;
         }
@@ -248,18 +247,19 @@ public class PaymentOrderService {
                 }
                 continue;
             }
-            if (order.getStatus() != PaymentOrderStatus.PENDING_CHECKOUT
-                    && order.getStatus() != PaymentOrderStatus.CHECKOUT_OPEN) {
+            if (order.getStatus() == PaymentOrderStatus.CHECKOUT_OPEN) {
+                if (order.getStripeSessionId() != null) {
+                    providerSessions.add(new ProviderCheckoutSessionReference(
+                            order.getId(), order.getStripeSessionId()));
+                }
                 continue;
             }
-            if (order.getStripeSessionId() != null) {
-                providerSessions.add(new ProviderCheckoutSessionReference(
-                        order.getId(), order.getStripeSessionId()));
+            if (order.getStatus() != PaymentOrderStatus.PENDING_CHECKOUT) {
+                continue;
             }
             order.setStatus(PaymentOrderStatus.CANCELLED);
             releasePromotion(order, "ACCOUNT_ACCESS_REVOKED");
-            order.setManualReviewReason(order.getStripeSessionId() == null
-                    ? ACCOUNT_ACCESS_REVOKED : PROVIDER_EXPIRY_PENDING);
+            order.setManualReviewReason(ACCOUNT_ACCESS_REVOKED);
             orderRepository.save(order);
             revoked++;
         }
@@ -280,7 +280,15 @@ public class PaymentOrderService {
             throw api(HttpStatus.BAD_REQUEST, "PROVIDER_SESSION_OWNER_MISMATCH",
                     "Provider Checkout session does not match the owned order.");
         }
-        if (PROVIDER_EXPIRED.equals(order.getManualReviewReason())) {
+        if (order.getStatus() == PaymentOrderStatus.EXPIRED
+                || PROVIDER_EXPIRED.equals(order.getManualReviewReason())) {
+            return;
+        }
+        if (order.getStatus() == PaymentOrderStatus.CHECKOUT_OPEN) {
+            order.setStatus(PaymentOrderStatus.EXPIRED);
+            releasePromotion(order, "PROVIDER_SESSION_EXPIRED_CONFIRMED");
+            order.setManualReviewReason(PROVIDER_EXPIRED);
+            orderRepository.save(order);
             return;
         }
         if (order.getStatus() != PaymentOrderStatus.CANCELLED
@@ -295,12 +303,33 @@ public class PaymentOrderService {
     @Transactional(readOnly = true)
     public List<ProviderCheckoutSessionReference> pendingProviderSessionExpiries(String owner) {
         return orderRepository.findByUserIdAndStatusIn(
-                        owner, List.of(PaymentOrderStatus.CANCELLED)).stream()
-                .filter(order -> PROVIDER_EXPIRY_PENDING.equals(order.getManualReviewReason()))
+                        owner, List.of(
+                                PaymentOrderStatus.CHECKOUT_OPEN,
+                                PaymentOrderStatus.CANCELLED)).stream()
+                .filter(order -> order.getStatus() == PaymentOrderStatus.CHECKOUT_OPEN
+                        || PROVIDER_EXPIRY_PENDING.equals(order.getManualReviewReason()))
                 .filter(order -> order.getStripeSessionId() != null)
                 .map(order -> new ProviderCheckoutSessionReference(
                         order.getId(), order.getStripeSessionId()))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public void requireNoAccountRevocationBlockers(String owner) {
+        boolean unresolved = orderRepository.findByUserIdAndStatusIn(
+                        owner,
+                        List.of(
+                                PaymentOrderStatus.PENDING_CHECKOUT,
+                                PaymentOrderStatus.CHECKOUT_OPEN,
+                                PaymentOrderStatus.MANUAL_REVIEW,
+                                PaymentOrderStatus.CANCELLED)).stream()
+                .anyMatch(order -> order.getStatus() != PaymentOrderStatus.CANCELLED
+                        || PROVIDER_EXPIRY_PENDING.equals(order.getManualReviewReason()));
+        if (unresolved) {
+            throw api(HttpStatus.SERVICE_UNAVAILABLE,
+                    "PAYMENT_FINANCIAL_RECONCILIATION_PENDING",
+                    "Account deletion is waiting for payment reconciliation to complete.");
+        }
     }
 
     public List<UUID> pendingProviderSessionExpiryIds(int batchSize) {
@@ -308,6 +337,27 @@ public class PaymentOrderService {
                 PaymentOrderStatus.CANCELLED,
                 PROVIDER_EXPIRY_PENDING,
                 org.springframework.data.domain.PageRequest.of(0, batchSize));
+    }
+
+    public List<UUID> expiredOpenProviderSessionIds(
+            Instant reconciliationTime, int batchSize) {
+        return orderRepository.findExpiredIds(
+                List.of(PaymentOrderStatus.CHECKOUT_OPEN),
+                reconciliationTime,
+                org.springframework.data.domain.PageRequest.of(0, batchSize));
+    }
+
+    @Transactional(readOnly = true)
+    public PendingProviderSession openProviderSessionExpiry(UUID orderId) {
+        PaymentOrder order = orderRepository.findById(orderId).orElse(null);
+        if (order == null
+                || order.getStatus() != PaymentOrderStatus.CHECKOUT_OPEN
+                || order.getStripeSessionId() == null) {
+            return null;
+        }
+        return new PendingProviderSession(
+                order.getUserId(),
+                new ProviderCheckoutSessionReference(order.getId(), order.getStripeSessionId()));
     }
 
     @Transactional(readOnly = true)
@@ -417,6 +467,23 @@ public class PaymentOrderService {
         }
         DocumentCreditWallet wallet = walletRepository.findByUserIdForUpdate(order.getUserId())
                 .orElseThrow();
+        if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.REVOCATION_PENDING) {
+            order.setStripePaymentIntentId(request.getPaymentIntentId());
+            order.setProviderLivemode(request.getLiveMode());
+            order.setProviderBillingCountry(upper(request.getBillingCountry()));
+            order.setProviderAmountTotalMinor(request.getAmountTotalMinor());
+            order.setProviderCurrency(upper(request.getCurrency()));
+            order.setPaidAt(request.getEventCreatedAt() == null
+                    ? Instant.now() : request.getEventCreatedAt());
+            order.setStatus(PaymentOrderStatus.MANUAL_REVIEW);
+            order.setManualReviewReason(
+                    "PAID_DURING_ACCOUNT_REVOCATION_REFUND_REQUIRED");
+            event.setOutcome("PAID_DURING_REVOCATION_REVIEW");
+            event.setProcessedAt(Instant.now());
+            orderRepository.save(order);
+            eventRepository.save(event);
+            return eventResponse(event, order, 0, 0);
+        }
         if (wallet.getLifecycleStatus() != DocumentCreditWalletStatus.ACTIVE) {
             order.setStatus(PaymentOrderStatus.MANUAL_REVIEW);
             order.setManualReviewReason("ACCOUNT_NOT_ACTIVE");
@@ -466,6 +533,7 @@ public class PaymentOrderService {
         order.setPaidAt(request.getEventCreatedAt() == null ? Instant.now() : request.getEventCreatedAt());
         order.setFulfilledAt(Instant.now());
         order.setStatus(PaymentOrderStatus.FULFILLED);
+        order.setManualReviewReason(null);
         event.setOutcome("FULFILLED");
         event.setProcessedAt(Instant.now());
         orderRepository.save(order);
@@ -486,11 +554,22 @@ public class PaymentOrderService {
             event.setOutcome("UNMATCHED_EXPIRED_SESSION");
         } else if (order.getStatus() == PaymentOrderStatus.CHECKOUT_OPEN
                 || order.getStatus() == PaymentOrderStatus.PENDING_CHECKOUT) {
-            requireSessionMatch(order, request.getStripeSessionId());
+            if (order.getStripeSessionId() == null
+                    && order.getStatus() == PaymentOrderStatus.PENDING_CHECKOUT) {
+                order.setStripeSessionId(request.getStripeSessionId());
+            } else {
+                requireSessionMatch(order, request.getStripeSessionId());
+            }
             order.setStatus(PaymentOrderStatus.EXPIRED);
             releasePromotion(order, "CHECKOUT_SESSION_EXPIRED");
             orderRepository.save(order);
             event.setOutcome("ORDER_EXPIRED");
+        } else if (order.getStatus() == PaymentOrderStatus.CANCELLED
+                && PROVIDER_EXPIRY_PENDING.equals(order.getManualReviewReason())) {
+            requireSessionMatch(order, request.getStripeSessionId());
+            order.setManualReviewReason(PROVIDER_EXPIRED);
+            orderRepository.save(order);
+            event.setOutcome("ORDER_PROVIDER_EXPIRY_CONFIRMED");
         } else {
             event.setOutcome("TERMINAL_ORDER_UNCHANGED");
         }
@@ -559,14 +638,12 @@ public class PaymentOrderService {
             order.setReviewShortfallCredits(Math.addExact(
                     order.getReviewShortfallCredits(), shortfall));
         }
-        if (dispute) {
-            order.setStatus(PaymentOrderStatus.DISPUTED);
-        } else if (targetReversal >= originallyGranted) {
-            order.setStatus(PaymentOrderStatus.REFUNDED);
-        } else {
-            order.setStatus(PaymentOrderStatus.PARTIALLY_REFUNDED);
+        order.setStatus(aggregateReversalStatus(
+                order.getStatus(), dispute, order.getReversedDocumentCredits(), originallyGranted));
+        if (shortfall > 0) {
+            order.setStatus(PaymentOrderStatus.MANUAL_REVIEW);
+            order.setManualReviewReason("REVERSAL_CREDIT_SHORTFALL");
         }
-        if (shortfall > 0) order.setManualReviewReason("REVERSAL_CREDIT_SHORTFALL");
         orderRepository.save(order);
         event.setOutcome(shortfall > 0 ? "REVERSED_REVIEW_REQUIRED" : "REVERSED");
         event.setProcessedAt(Instant.now());
@@ -741,6 +818,26 @@ public class PaymentOrderService {
         }
         return Math.toIntExact(
                 Math.multiplyExact((long) credits, refundedMinor) / paidMinor);
+    }
+
+    private PaymentOrderStatus aggregateReversalStatus(
+            PaymentOrderStatus current,
+            boolean dispute,
+            int cumulativeReversedCredits,
+            int originallyGrantedCredits) {
+        if (current == PaymentOrderStatus.MANUAL_REVIEW) {
+            return PaymentOrderStatus.MANUAL_REVIEW;
+        }
+        if (dispute || current == PaymentOrderStatus.DISPUTED) {
+            return PaymentOrderStatus.DISPUTED;
+        }
+        if (cumulativeReversedCredits >= originallyGrantedCredits) {
+            return PaymentOrderStatus.REFUNDED;
+        }
+        if (cumulativeReversedCredits > 0) {
+            return PaymentOrderStatus.PARTIALLY_REFUNDED;
+        }
+        return current;
     }
 
     private PaymentOrder lockedOwnedOrder(String owner, UUID id) {
