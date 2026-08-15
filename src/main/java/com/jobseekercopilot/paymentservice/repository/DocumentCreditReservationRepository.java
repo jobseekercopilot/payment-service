@@ -33,8 +33,14 @@ public interface DocumentCreditReservationRepository
             @Param("status") DocumentCreditReservationStatus status,
             @Param("expiresAt") Instant expiresAt,
             Pageable pageable);
-    List<DocumentCreditReservation> findByUserIdAndStatus(
-            String userId, DocumentCreditReservationStatus status);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from DocumentCreditReservation r "
+            + "where r.userId = :userId and r.status = :status "
+            + "order by r.createdAt asc, r.id asc")
+    List<DocumentCreditReservation> findByUserIdAndStatusForUpdate(
+            @Param("userId") String userId,
+            @Param("status") DocumentCreditReservationStatus status);
+
     List<DocumentCreditReservation> findByUserIdOrderByCreatedAtAsc(String userId);
     List<DocumentCreditReservation> findByWalletId(UUID walletId);
 }

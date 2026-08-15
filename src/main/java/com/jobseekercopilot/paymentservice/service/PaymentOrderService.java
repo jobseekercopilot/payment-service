@@ -1,6 +1,7 @@
 package com.jobseekercopilot.paymentservice.service;
 
 import com.jobseekercopilot.paymentservice.config.PaymentProperties;
+import com.jobseekercopilot.paymentservice.dto.AccountPaymentLifecycleResponse;
 import com.jobseekercopilot.paymentservice.dto.BindCheckoutSessionRequest;
 import com.jobseekercopilot.paymentservice.dto.CheckoutReadinessResponse;
 import com.jobseekercopilot.paymentservice.dto.CreatePaymentOrderRequest;
@@ -314,15 +315,20 @@ public class PaymentOrderService {
                 .toList();
     }
 
-    @Transactional(readOnly = true)
-    public void requireNoAccountRevocationBlockers(String owner) {
-        boolean unresolved = orderRepository.findByUserIdAndStatusIn(
-                        owner,
-                        List.of(
+    @Transactional
+    public AccountPaymentLifecycleResponse finalizeAccountRevocation(String owner) {
+        // Lock every owned order, including historical orders. Provider completion and reversal
+        // processing lock an order before the wallet, so this creates one atomic final gate: an
+        // in-flight financial event either commits first and is observed here, or waits until the
+        // wallet has been durably revoked. Locking only the currently blocking statuses would
+        // leave a status-transition phantom between this check and wallet revocation.
+        boolean unresolved = orderRepository.findByUserIdForUpdate(owner).stream()
+                .filter(order -> List.of(
                                 PaymentOrderStatus.PENDING_CHECKOUT,
                                 PaymentOrderStatus.CHECKOUT_OPEN,
                                 PaymentOrderStatus.MANUAL_REVIEW,
-                                PaymentOrderStatus.CANCELLED)).stream()
+                                PaymentOrderStatus.CANCELLED)
+                        .contains(order.getStatus()))
                 .anyMatch(order -> order.getStatus() != PaymentOrderStatus.CANCELLED
                         || PROVIDER_EXPIRY_PENDING.equals(order.getManualReviewReason()));
         if (unresolved) {
@@ -330,6 +336,7 @@ public class PaymentOrderService {
                     "PAYMENT_FINANCIAL_RECONCILIATION_PENDING",
                     "Account deletion is waiting for payment reconciliation to complete.");
         }
+        return documentCreditService.finalizeAccessRevocation(owner);
     }
 
     public List<UUID> pendingProviderSessionExpiryIds(int batchSize) {

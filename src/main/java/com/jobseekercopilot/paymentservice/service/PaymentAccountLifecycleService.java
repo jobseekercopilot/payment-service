@@ -49,9 +49,8 @@ public class PaymentAccountLifecycleService {
                     "PROVIDER_SESSION_EXPIRY_PENDING",
                     "Payment access is blocked; provider Checkout terminal confirmation will be retried.");
         }
-        paymentOrderService.requireNoAccountRevocationBlockers(owner);
         AccountPaymentLifecycleResponse result =
-                documentCreditService.finalizeAccessRevocation(owner);
+                paymentOrderService.finalizeAccountRevocation(owner);
         result.setCheckoutOrdersRevoked(Math.addExact(
                 checkout.revokedOrders(), checkout.providerSessionsToExpire().size()));
         result.setProviderSessionsRequireExpiry(false);

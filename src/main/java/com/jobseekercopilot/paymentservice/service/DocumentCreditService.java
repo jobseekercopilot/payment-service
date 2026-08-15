@@ -25,6 +25,7 @@ import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionR
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionCampaignRepository;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -280,14 +281,16 @@ public class DocumentCreditService {
     @Transactional
     public AccountPaymentLifecycleResponse finalizeAccessRevocation(String owner) {
         provisioner.ensureWallet(owner);
+        List<DocumentCreditReservation> reserved =
+                reservationRepository.findByUserIdAndStatusForUpdate(
+                        owner, DocumentCreditReservationStatus.RESERVED);
         DocumentCreditWallet wallet = walletRepository.findByUserIdForUpdate(owner).orElseThrow();
         if (wallet.getLifecycleStatus() == DocumentCreditWalletStatus.BLOCKED_REVIEW
                 || wallet.getReviewDebtCredits() > 0) {
             throw api(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT_FINANCIAL_REVIEW_REQUIRED",
                     "Account deletion is waiting for payment review to be completed.");
         }
-        for (DocumentCreditReservation reservation : reservationRepository.findByUserIdAndStatus(
-                owner, DocumentCreditReservationStatus.RESERVED)) {
+        for (DocumentCreditReservation reservation : reserved) {
             releaseLocked(reservation, wallet, "Account access revoked before document delivery");
         }
         if (wallet.getLifecycleStatus() != DocumentCreditWalletStatus.REVOKED) {

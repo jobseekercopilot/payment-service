@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.paymentservice.entity.FoundingPromotionCampaign;
 import com.jobseekercopilot.paymentservice.entity.DocumentCreditReservation;
 import com.jobseekercopilot.paymentservice.entity.PaymentOrder;
+import com.jobseekercopilot.paymentservice.dto.ProviderPaymentEventRequest;
+import com.jobseekercopilot.paymentservice.dto.ProviderPaymentEventResponse;
+import com.jobseekercopilot.paymentservice.exception.PaymentApiException;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
@@ -13,13 +16,17 @@ import com.jobseekercopilot.paymentservice.repository.FoundingPromotionReservati
 import com.jobseekercopilot.paymentservice.repository.PaymentOrderRepository;
 import com.jobseekercopilot.paymentservice.repository.PaymentProviderEventRepository;
 import com.jobseekercopilot.paymentservice.service.CommercialReservationRecoveryService;
+import com.jobseekercopilot.paymentservice.service.DocumentCreditService;
+import com.jobseekercopilot.paymentservice.service.PaymentOrderService;
 import com.jobseekercopilot.paymentservice.service.ProviderSessionExpiryReconciliationService;
 import com.jobseekercopilot.paymentservice.service.StripeLifecycleClient;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +36,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
@@ -73,6 +82,9 @@ class DocumentCreditPaymentControllerIntegrationTest {
     @Autowired FoundingPromotionCampaignRepository campaignRepository;
     @Autowired CommercialReservationRecoveryService commercialRecoveryService;
     @Autowired ProviderSessionExpiryReconciliationService providerSessionReconciliation;
+    @Autowired DocumentCreditService documentCreditService;
+    @Autowired PaymentOrderService paymentOrderService;
+    @Autowired PlatformTransactionManager transactionManager;
     @MockBean StripeLifecycleClient stripeLifecycleClient;
 
     @BeforeEach
@@ -494,6 +506,111 @@ class DocumentCreditPaymentControllerIntegrationTest {
         org.assertj.core.api.Assertions.assertThat(
                         walletRepository.findByUserId(owner).orElseThrow().getBalanceCredits())
                 .isEqualTo(2);
+    }
+
+    @Test
+    void completionHoldingOrderLockBeforeFinalRevocationCreatesDurableBlocker()
+            throws Exception {
+        String owner = "owner-delete-completion-lock-first";
+        BoundCheckout checkout = createBoundCheckout(
+                owner, "completion-lock-first", "cs_test_completion_lock_first");
+        documentCreditService.beginAccessRevocation(owner);
+        ProviderPaymentEventRequest completion = objectMapper.readValue(
+                settledEvent(
+                                "evt_completion_lock_first",
+                                checkout.orderId().toString(),
+                                checkout.sessionId(),
+                                "pi_completion_lock_first",
+                                "GB")
+                        .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799"),
+                ProviderPaymentEventRequest.class);
+
+        CountDownLatch completionHasOrderLock = new CountDownLatch(1);
+        CountDownLatch allowCompletionToCommit = new CountDownLatch(1);
+        CountDownLatch finalizerStarted = new CountDownLatch(1);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            CompletableFuture<ProviderPaymentEventResponse> completionResult =
+                    CompletableFuture.supplyAsync(() -> new TransactionTemplate(transactionManager)
+                            .execute(status -> {
+                                orderRepository.findByIdForUpdate(checkout.orderId())
+                                        .orElseThrow();
+                                completionHasOrderLock.countDown();
+                                awaitLatch(
+                                        allowCompletionToCommit,
+                                        "completion release timed out");
+                                return paymentOrderService.providerEvent(completion);
+                            }), executor);
+            org.assertj.core.api.Assertions.assertThat(
+                    completionHasOrderLock.await(10, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<Throwable> revocationResult = CompletableFuture.supplyAsync(
+                    () -> {
+                        finalizerStarted.countDown();
+                        return finalRevocationFailure(owner);
+                    }, executor);
+            org.assertj.core.api.Assertions.assertThat(
+                    finalizerStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            allowCompletionToCommit.countDown();
+
+            org.assertj.core.api.Assertions.assertThat(completionResult.join().getOutcome())
+                    .isEqualTo("PAID_DURING_REVOCATION_REVIEW");
+            assertFinancialReconciliationBlock(revocationResult.join());
+        } finally {
+            allowCompletionToCommit.countDown();
+            executor.shutdownNow();
+        }
+        assertPaidDuringRevocationState(owner, checkout.orderId());
+    }
+
+    @Test
+    void finalRevocationHoldingOrderLockBeforeCompletionCannotMissThePayment()
+            throws Exception {
+        String owner = "owner-delete-finalizer-lock-first";
+        BoundCheckout checkout = createBoundCheckout(
+                owner, "finalizer-lock-first", "cs_test_finalizer_lock_first");
+        documentCreditService.beginAccessRevocation(owner);
+        ProviderPaymentEventRequest completion = objectMapper.readValue(
+                settledEvent(
+                                "evt_finalizer_lock_first",
+                                checkout.orderId().toString(),
+                                checkout.sessionId(),
+                                "pi_finalizer_lock_first",
+                                "GB")
+                        .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799"),
+                ProviderPaymentEventRequest.class);
+
+        CountDownLatch finalizerHasAllOrderLocks = new CountDownLatch(1);
+        CountDownLatch allowFinalizerToCheck = new CountDownLatch(1);
+        CountDownLatch completionStarted = new CountDownLatch(1);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            CompletableFuture<Throwable> revocationResult = CompletableFuture.supplyAsync(
+                    () -> finalRevocationFailureWithOrderLocks(
+                            owner, finalizerHasAllOrderLocks, allowFinalizerToCheck),
+                    executor);
+            org.assertj.core.api.Assertions.assertThat(
+                    finalizerHasAllOrderLocks.await(10, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<ProviderPaymentEventResponse> completionResult =
+                    CompletableFuture.supplyAsync(() -> {
+                        completionStarted.countDown();
+                        return paymentOrderService.providerEvent(completion);
+                    }, executor);
+            org.assertj.core.api.Assertions.assertThat(
+                    completionStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            allowFinalizerToCheck.countDown();
+
+            assertFinancialReconciliationBlock(revocationResult.join());
+            org.assertj.core.api.Assertions.assertThat(completionResult.join().getOutcome())
+                    .isEqualTo("PAID_DURING_REVOCATION_REVIEW");
+        } finally {
+            allowFinalizerToCheck.countDown();
+            executor.shutdownNow();
+        }
+        assertPaidDuringRevocationState(owner, checkout.orderId());
     }
 
     @Test
@@ -931,6 +1048,82 @@ class DocumentCreditPaymentControllerIntegrationTest {
         }
     }
 
+    private BoundCheckout createBoundCheckout(
+            String owner, String idempotencyKey, String sessionId) throws Exception {
+        String orderJson = mockMvc.perform(post("/api/v2/payments/orders")
+                        .with(paymentGateway(owner))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(checkoutRequest("starter")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        java.util.UUID orderId = java.util.UUID.fromString(
+                objectMapper.readTree(orderJson).path("orderId").asText());
+        mockMvc.perform(post("/api/v2/payments/orders/{id}/bind-stripe-session", orderId)
+                        .with(stripeGateway(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stripeSessionId\":\"" + sessionId + "\"}"))
+                .andExpect(status().isOk());
+        return new BoundCheckout(orderId, sessionId);
+    }
+
+    private Throwable finalRevocationFailure(String owner) {
+        try {
+            paymentOrderService.finalizeAccountRevocation(owner);
+            return null;
+        } catch (Throwable failure) {
+            return failure;
+        }
+    }
+
+    private Throwable finalRevocationFailureWithOrderLocks(
+            String owner, CountDownLatch locked, CountDownLatch proceed) {
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                orderRepository.findByUserIdForUpdate(owner);
+                locked.countDown();
+                awaitLatch(proceed, "finalizer release timed out");
+                paymentOrderService.finalizeAccountRevocation(owner);
+            });
+            return null;
+        } catch (Throwable failure) {
+            return failure;
+        }
+    }
+
+    private void awaitLatch(CountDownLatch latch, String timeoutMessage) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(timeoutMessage);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("concurrency test interrupted", interrupted);
+        }
+    }
+
+    private void assertFinancialReconciliationBlock(Throwable failure) {
+        org.assertj.core.api.Assertions.assertThat(failure)
+                .isInstanceOf(PaymentApiException.class);
+        org.assertj.core.api.Assertions.assertThat(((PaymentApiException) failure).getCode())
+                .isEqualTo("PAYMENT_FINANCIAL_RECONCILIATION_PENDING");
+    }
+
+    private void assertPaidDuringRevocationState(String owner, java.util.UUID orderId) {
+        PaymentOrder reviewed = orderRepository.findById(orderId).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(reviewed.getStatus().name())
+                .isEqualTo("MANUAL_REVIEW");
+        org.assertj.core.api.Assertions.assertThat(reviewed.getManualReviewReason())
+                .isEqualTo("PAID_DURING_ACCOUNT_REVOCATION_REFUND_REQUIRED");
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow()
+                                .getLifecycleStatus().name())
+                .isEqualTo("REVOCATION_PENDING");
+        org.assertj.core.api.Assertions.assertThat(
+                        walletRepository.findByUserId(owner).orElseThrow().getBalanceCredits())
+                .isEqualTo(2);
+    }
+
     private String createAndFulfilOrder(
             String owner,
             String plan,
@@ -1054,4 +1247,6 @@ class DocumentCreditPaymentControllerIntegrationTest {
             return request;
         };
     }
+
+    private record BoundCheckout(java.util.UUID orderId, String sessionId) {}
 }

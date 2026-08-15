@@ -26,6 +26,11 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, UUID
     List<PaymentOrder> findByUserIdOrderByCreatedAtAsc(String userId);
     List<PaymentOrder> findByUserIdAndStatusIn(String userId, List<PaymentOrderStatus> statuses);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from PaymentOrder o where o.userId = :userId "
+            + "order by o.createdAt asc, o.id asc")
+    List<PaymentOrder> findByUserIdForUpdate(@Param("userId") String userId);
+
     @Query("select o.id from PaymentOrder o where o.status = :status "
             + "and o.manualReviewReason = :reason "
             + "and o.stripeSessionId is not null order by o.updatedAt asc")
