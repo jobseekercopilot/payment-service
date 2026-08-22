@@ -39,8 +39,20 @@ public class DocumentCreditLedgerReconciliationService {
             }
             expectedBefore = entry.getBalanceAfter();
         }
-        boolean reservationsValid = reservationRepository.findByWalletId(walletId).stream()
+        List<DocumentCreditReservation> reservations = reservationRepository.findByWalletId(walletId);
+        boolean reservationsValid = reservations.stream()
                 .allMatch(reservation -> reservationEvidenceValid(reservation, entries));
+        long recordedDeliveries = reservations.stream()
+                .mapToLong(reservation -> deliveryRepository
+                        .findByReservationIdOrderByDocumentType(reservation.getId()).size())
+                .sum();
+        long deliverySpendEntries = entries.stream()
+                .filter(entry -> entry.getTransactionType()
+                        == DocumentCreditTransactionType.DOCUMENT_SPENT)
+                .filter(entry -> entry.getOperationId()
+                        .startsWith("DOCUMENT_DELIVERY_COMMIT:"))
+                .count();
+        reservationsValid = reservationsValid && recordedDeliveries == deliverySpendEntries;
         long reconstructed = transactionRepository.sumBalanceDeltaByWalletId(walletId);
         return new Result(walletId, wallet.getBalanceCredits(), reconstructed,
                 entries.size(), chainValid, reservationsValid);

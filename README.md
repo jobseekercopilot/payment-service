@@ -61,6 +61,10 @@ usage—the only consumption boundary. Existing v1 Payment and fixture operation
 remain compatible but cannot mutate commercial value in production through
 demo or legacy Stripe confirmation routes.
 
+The successful-delivery rule, migration meaning and executable allowance
+reconciliation report are documented in
+[`docs/DOCUMENT_GENERATION_ALLOWANCE.md`](docs/DOCUMENT_GENERATION_ALLOWANCE.md).
+
 The full test suite needs a Docker-compatible runtime because it proves the
 ledger against PostgreSQL 15, including dump/restore and append-only enforcement.
 
