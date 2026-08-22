@@ -81,9 +81,9 @@ public class PaymentCommercialConfigurationVerifier implements ApplicationRunner
 
     private String approvedDescription(String id) {
         return switch (id) {
-            case "starter" -> "Up to 5 complete CV and cover-letter applications";
-            case "active" -> "25 tailored document credits";
-            case "power" -> "60 tailored document credits";
+            case "starter" -> "10 document generations — up to 5 complete applications";
+            case "active" -> "25 tailored document generations";
+            case "power" -> "60 tailored document generations";
             default -> throw new IllegalArgumentException("Unknown public-beta plan: " + id);
         };
     }

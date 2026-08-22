@@ -83,6 +83,9 @@ public class EnvironmentLedgerReset {
                     "DELETE FROM founding_promotion_reservations WHERE user_id = ?", ownerId);
             int orders = delete(connection,
                     "DELETE FROM payment_orders WHERE user_id = ?", ownerId);
+            int deliveries = delete(connection,
+                    "DELETE FROM document_generation_deliveries WHERE reservation_id IN "
+                            + "(SELECT id FROM document_credit_reservations WHERE user_id = ?)", ownerId);
             int reservations = delete(connection,
                     "DELETE FROM document_credit_reservations WHERE user_id = ?", ownerId);
             int transactions = delete(connection,
@@ -99,7 +102,7 @@ public class EnvironmentLedgerReset {
                 statement.executeUpdate();
             }
             return new DocumentCreditResetCounts(
-                    wallets, transactions, reservations, orders,
+                    wallets, transactions, deliveries, reservations, orders,
                     providerEvents, promotionReservations);
         });
     }
@@ -129,12 +132,13 @@ public class EnvironmentLedgerReset {
     public record DocumentCreditResetCounts(
             int wallets,
             int ledgerEntries,
+            int deliveredDocuments,
             int reservations,
             int orders,
             int providerEvents,
             int promotionReservations) {
         public int total() {
-            return wallets + ledgerEntries + reservations + orders
+            return wallets + ledgerEntries + deliveredDocuments + reservations + orders
                     + providerEvents + promotionReservations;
         }
     }

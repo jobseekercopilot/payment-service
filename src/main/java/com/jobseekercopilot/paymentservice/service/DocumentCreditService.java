@@ -2,7 +2,10 @@ package com.jobseekercopilot.paymentservice.service;
 
 import com.jobseekercopilot.paymentservice.config.PaymentProperties;
 import com.jobseekercopilot.paymentservice.dto.AccountPaymentLifecycleResponse;
+import com.jobseekercopilot.paymentservice.dto.CommitDocumentGenerationRequest;
+import com.jobseekercopilot.paymentservice.dto.CommitDocumentGenerationRequest.DeliveredDocument;
 import com.jobseekercopilot.paymentservice.dto.CreateDocumentCreditReservationRequest;
+import com.jobseekercopilot.paymentservice.dto.DeliveredDocumentResponse;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditCatalogResponse;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditCommitResponse;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditPlanResponse;
@@ -18,18 +21,24 @@ import com.jobseekercopilot.paymentservice.entity.DocumentCreditTransaction;
 import com.jobseekercopilot.paymentservice.entity.DocumentCreditTransactionType;
 import com.jobseekercopilot.paymentservice.entity.DocumentCreditWallet;
 import com.jobseekercopilot.paymentservice.entity.DocumentCreditWalletStatus;
+import com.jobseekercopilot.paymentservice.entity.DocumentGenerationDelivery;
 import com.jobseekercopilot.paymentservice.entity.FoundingPromotionCampaign;
 import com.jobseekercopilot.paymentservice.exception.PaymentApiException;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentGenerationDeliveryRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionCampaignRepository;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -41,6 +50,7 @@ public class DocumentCreditService {
     private final DocumentCreditWalletRepository walletRepository;
     private final DocumentCreditTransactionRepository transactionRepository;
     private final DocumentCreditReservationRepository reservationRepository;
+    private final DocumentGenerationDeliveryRepository deliveryRepository;
     private final FoundingPromotionCampaignRepository campaignRepository;
     private final DocumentCreditWalletProvisioner provisioner;
     private final PaymentProperties properties;
@@ -153,7 +163,7 @@ public class DocumentCreditService {
         }
         if (wallet.getBalanceCredits() < request.getDocumentCredits()) {
             throw api(HttpStatus.PAYMENT_REQUIRED, "INSUFFICIENT_DOCUMENT_CREDITS",
-                    "There are not enough document credits for this generation.");
+                    "There are not enough document generations remaining.");
         }
         int before = wallet.getBalanceCredits();
         int after = Math.subtractExact(before, request.getDocumentCredits());
@@ -192,41 +202,116 @@ public class DocumentCreditService {
     }
 
     @Transactional
-    public DocumentCreditCommitResponse commit(String owner, UUID id) {
+    public DocumentCreditCommitResponse commit(
+            String owner,
+            UUID id,
+            CommitDocumentGenerationRequest request) {
         DocumentCreditReservation reservation = reservationRepository
                 .findByIdAndUserIdForUpdate(id, owner)
                 .orElseThrow(() -> api(HttpStatus.NOT_FOUND, "RESERVATION_NOT_FOUND",
                         "Document-credit reservation was not found."));
         DocumentCreditWallet wallet = walletRepository.findByIdForUpdate(reservation.getWalletId())
                 .orElseThrow();
+        List<DeliveredDocument> deliveries = validatedDeliveries(
+                reservation, request);
         if (reservation.getStatus() == DocumentCreditReservationStatus.COMMITTED) {
+            requireSameDeliveredDocuments(reservation, deliveries);
             return commitResponse(reservation, wallet);
         }
         if (reservation.getStatus() != DocumentCreditReservationStatus.RESERVED) {
             throw api(HttpStatus.CONFLICT, "RESERVATION_ALREADY_RELEASED",
-                    "Released document credits cannot be charged.");
+                    "A released document-generation allowance cannot be charged.");
         }
         if (!reservation.getExpiresAt().isAfter(Instant.now())) {
             throw api(HttpStatus.CONFLICT, "RESERVATION_EXPIRED",
-                    "The document-credit reservation expired before delivery.");
+                    "The document-generation reservation expired before delivery.");
         }
         int balance = wallet.getBalanceCredits();
-        transactionRepository.save(transaction(
-                wallet, DocumentCreditTransactionType.DOCUMENT_SPENT,
-                reservation.getDocumentCredits(), balance, balance,
-                "DOCUMENT_RESERVATION_COMMIT:" + reservation.getId(),
-                reservation.isRegeneration()
-                        ? "Regenerated document delivered"
-                        : deliveredDescription(reservation.getDocumentCredits()),
-                reservation.getReferenceType(), reservation.getReferenceId()));
+        if (deliveries.stream().anyMatch(delivery ->
+                deliveryRepository.existsByGeneratedDocumentId(
+                        delivery.getDocumentId()))) {
+            throw api(HttpStatus.CONFLICT, "DELIVERED_DOCUMENT_ALREADY_CONSUMED",
+                    "A delivered document can consume the allowance only once.");
+        }
+        try {
+            for (DeliveredDocument delivery : deliveries) {
+                deliveryRepository.save(DocumentGenerationDelivery.builder()
+                        .reservationId(reservation.getId())
+                        .walletId(wallet.getId())
+                        .userId(owner)
+                        .generatedDocumentId(delivery.getDocumentId())
+                        .documentType(delivery.getDocumentType().name())
+                        .regeneration(reservation.isRegeneration())
+                        .build());
+                transactionRepository.save(transaction(
+                        wallet, DocumentCreditTransactionType.DOCUMENT_SPENT,
+                        1, balance, balance,
+                        "DOCUMENT_DELIVERY_COMMIT:" + delivery.getDocumentId(),
+                        deliveredDescription(
+                                delivery.getDocumentType().name(),
+                                reservation.isRegeneration()),
+                        "GENERATED_DOCUMENT",
+                        delivery.getDocumentId().toString()));
+            }
+            deliveryRepository.flush();
+        } catch (DataIntegrityViolationException duplicateDelivery) {
+            throw api(HttpStatus.CONFLICT, "DELIVERED_DOCUMENT_ALREADY_CONSUMED",
+                    "A delivered document can consume the allowance only once.");
+        }
         wallet.setLifetimeSpentCredits(Math.addExact(
-                wallet.getLifetimeSpentCredits(), reservation.getDocumentCredits()));
+                wallet.getLifetimeSpentCredits(), deliveries.size()));
         walletRepository.save(wallet);
         reservation.setStatus(DocumentCreditReservationStatus.COMMITTED);
         reservation.setCommittedAt(Instant.now());
         reservation.setLastTransitionReason("SUCCESSFULLY_DELIVERED");
         reservationRepository.save(reservation);
         return commitResponse(reservation, wallet);
+    }
+
+    private List<DeliveredDocument> validatedDeliveries(
+            DocumentCreditReservation reservation,
+            CommitDocumentGenerationRequest request) {
+        List<DeliveredDocument> deliveries = request.getDeliveries();
+        if (deliveries.size() != reservation.getDocumentCredits()) {
+            throw api(HttpStatus.CONFLICT, "DELIVERY_COUNT_MISMATCH",
+                    "Each reserved document generation must identify one delivered document.");
+        }
+        Set<UUID> ids = deliveries.stream()
+                .map(DeliveredDocument::getDocumentId)
+                .collect(Collectors.toSet());
+        Set<CommitDocumentGenerationRequest.DocumentType> types =
+                deliveries.stream()
+                        .map(DeliveredDocument::getDocumentType)
+                        .collect(Collectors.toSet());
+        if (ids.size() != deliveries.size()
+                || types.size() != deliveries.size()) {
+            throw api(HttpStatus.CONFLICT, "DELIVERY_EVIDENCE_DUPLICATED",
+                    "Delivered document identifiers and types must be unique.");
+        }
+        return deliveries.stream()
+                .sorted(Comparator.comparing(value ->
+                        value.getDocumentType().name()))
+                .toList();
+    }
+
+    private void requireSameDeliveredDocuments(
+            DocumentCreditReservation reservation,
+            List<DeliveredDocument> requested) {
+        List<DocumentGenerationDelivery> recorded =
+                deliveryRepository.findByReservationIdOrderByDocumentType(
+                        reservation.getId());
+        boolean matches = recorded.size() == requested.size();
+        for (int index = 0; matches && index < recorded.size(); index++) {
+            matches = recorded.get(index).getGeneratedDocumentId()
+                            .equals(requested.get(index).getDocumentId())
+                    && recorded.get(index).getDocumentType()
+                            .equals(requested.get(index)
+                                    .getDocumentType().name());
+        }
+        if (!matches) {
+            throw api(HttpStatus.CONFLICT, "DELIVERY_EVIDENCE_CONFLICT",
+                    "The reservation was already committed to different delivered documents.");
+        }
     }
 
     @Transactional
@@ -242,7 +327,7 @@ public class DocumentCreditService {
         }
         if (reservation.getStatus() == DocumentCreditReservationStatus.COMMITTED) {
             throw api(HttpStatus.CONFLICT, "RESERVATION_ALREADY_COMMITTED",
-                    "Delivered document credits cannot be released.");
+                    "A delivered document generation cannot be released.");
         }
         return releaseLocked(reservation, wallet, safeReason(reason));
     }
@@ -434,6 +519,16 @@ public class DocumentCreditService {
                 .spentDocumentCredits(reservation.getDocumentCredits())
                 .status(reservation.getStatus().name())
                 .wallet(mapWallet(wallet))
+                .deliveredDocuments(deliveryRepository
+                        .findByReservationIdOrderByDocumentType(
+                                reservation.getId()).stream()
+                        .map(delivery -> DeliveredDocumentResponse.builder()
+                                .documentId(delivery.getGeneratedDocumentId())
+                                .documentType(delivery.getDocumentType())
+                                .regeneration(delivery.isRegeneration())
+                                .deliveredAt(delivery.getDeliveredAt())
+                                .build())
+                        .toList())
                 .build();
     }
 
@@ -447,8 +542,15 @@ public class DocumentCreditService {
                 .build();
     }
 
-    private String deliveredDescription(int credits) {
-        return credits == 1 ? "Tailored document delivered" : "Tailored CV and cover letter delivered";
+    private String deliveredDescription(
+            String documentType,
+            boolean regeneration) {
+        String document = "CV".equals(documentType)
+                ? "Tailored CV"
+                : "Tailored cover letter";
+        return regeneration
+                ? document + " regeneration delivered"
+                : document + " delivered";
     }
 
     private String safeReason(String reason) {

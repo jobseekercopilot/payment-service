@@ -21,7 +21,7 @@ done
 jq -e '
     . as $root |
     (.openapi | type == "string" and startswith("3.")) and
-    (.info.version == "3.3.0") and
+    (.info.version == "3.4.0") and
     (.components.securitySchemes.serviceToken
         | .type == "apiKey" and .in == "header" and .name == "X-Service-Token") and
     (.components.securitySchemes.environmentDataToken
@@ -131,6 +131,17 @@ jq -e '
         == [{"serviceToken": []}]) and
     (.paths["/api/v2/payments/provider-events/stripe"].post.security
         == [{"serviceToken": []}]) and
+    (.paths["/api/v2/payments/document-credit-reservations/{reservationId}/commit"].post.requestBody.required == true) and
+    (.components.schemas.CommitDocumentGenerationRequest.required
+        | index("deliveries") != null) and
+    (.components.schemas.CommitDocumentGenerationRequest.properties.deliveries.minItems == 1) and
+    (.components.schemas.CommitDocumentGenerationRequest.properties.deliveries.maxItems == 2) and
+    (.components.schemas.DeliveredDocument.required
+        | index("documentId") != null and index("documentType") != null) and
+    (.components.schemas.DeliveredDocument.properties.documentType.enum
+        == ["CV", "COVER_LETTER"]) and
+    (.components.schemas.DocumentCreditCommitResponse.properties.deliveredDocuments.items["$ref"]
+        == "#/components/schemas/DeliveredDocumentResponse") and
     (.components.schemas.CreatePaymentOrderRequest.required
         | index("pricingPlanId") != null and index("billingCountry") != null and
           index("immediateSupplyRequested") != null and

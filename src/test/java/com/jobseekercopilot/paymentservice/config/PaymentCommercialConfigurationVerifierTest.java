@@ -128,10 +128,10 @@ class PaymentCommercialConfigurationVerifierTest {
         properties.getAccountLifecycle().setStripeGatewayToken(
                 "payment-to-stripe-lifecycle-test-token-000001");
         properties.setPricingPlans(List.of(
-                plan("starter", "Starter", "Up to 5 complete CV and cover-letter applications",
+                plan("starter", "Starter", "10 document generations — up to 5 complete applications",
                         10, 499, 1),
-                plan("active", "Active", "25 tailored document credits", 25, 1199, 2),
-                plan("power", "Power", "60 tailored document credits", 60, 1999, 3)));
+                plan("active", "Active", "25 tailored document generations", 25, 1199, 2),
+                plan("power", "Power", "60 tailored document generations", 60, 1999, 3)));
         return properties;
     }
 
