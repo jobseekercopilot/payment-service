@@ -109,7 +109,7 @@ class PaymentCommercialConfigurationVerifierTest {
                 "PAYMENT_LEGAL_ENTITY_REVIEWED", Boolean.toString(legalEntityReviewed));
         environment.setProperty("PAYMENT_FOUNDING_PROMOTION_ENABLED", "false");
         environment.setProperty("PAYMENT_FOUNDING_PROMOTION_RELEASE_AUTHORISED", "false");
-        environment.setProperty("PAYMENT_CATALOG_VERSION", "public-beta-2026-08-15");
+        environment.setProperty("PAYMENT_CATALOG_VERSION", "public-beta-2026-08-22");
         environment.setProperty(
                 "PAYMENT_CONSUMER_TERMS_VERSION", "uk-consumer-terms-2026-08-15");
         environment.setProperty("PAYMENT_FINANCIAL_RECORD_RETENTION_YEARS", "7");
@@ -129,9 +129,9 @@ class PaymentCommercialConfigurationVerifierTest {
                 "payment-to-stripe-lifecycle-test-token-000001");
         properties.setPricingPlans(List.of(
                 plan("starter", "Starter", "Up to 5 complete CV and cover-letter applications",
-                        10, 799, 1),
-                plan("active", "Active", "25 tailored document credits", 25, 1699, 2),
-                plan("power", "Power", "60 tailored document credits", 60, 3499, 3)));
+                        10, 499, 1),
+                plan("active", "Active", "25 tailored document credits", 25, 1199, 2),
+                plan("power", "Power", "60 tailored document credits", 60, 1999, 3)));
         return properties;
     }
 

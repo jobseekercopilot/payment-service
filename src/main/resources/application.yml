@@ -42,7 +42,7 @@ payment:
     account-lifecycle-token: ${ACCOUNT_LIFECYCLE_TO_PAYMENT_SERVICE_TOKEN:}
   free-starter-tokens: ${FREE_STARTER_TOKENS:20000}
   free-document-credits: ${FREE_DOCUMENT_CREDITS:2}
-  catalog-version: ${PAYMENT_CATALOG_VERSION:public-beta-2026-08-15}
+  catalog-version: ${PAYMENT_CATALOG_VERSION:public-beta-2026-08-22}
   currency: GBP
   billing-country: GB
   tax-treatment: ${PAYMENT_TAX_TREATMENT:VAT_NOT_CHARGED}
@@ -80,7 +80,7 @@ payment:
       description: Up to 5 complete CV and cover-letter applications
       token-amount: 100000
       document-credits: 10
-      price-gbp-pence: 799
+      price-gbp-pence: 499
       active: true
       sort-order: 1
     - id: active
@@ -88,7 +88,7 @@ payment:
       description: 25 tailored document credits
       token-amount: 250000
       document-credits: 25
-      price-gbp-pence: 1699
+      price-gbp-pence: 1199
       active: true
       sort-order: 2
     - id: power
@@ -96,7 +96,7 @@ payment:
       description: 60 tailored document credits
       token-amount: 600000
       document-credits: 60
-      price-gbp-pence: 3499
+      price-gbp-pence: 1999
       active: true
       sort-order: 3
 

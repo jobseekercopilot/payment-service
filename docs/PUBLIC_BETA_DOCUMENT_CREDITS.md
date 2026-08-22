@@ -6,14 +6,14 @@ audit. It does not authorise a deployment or real charges.
 
 ## Server-owned offer
 
-The catalog version is `public-beta-2026-08-15`, the currency is GBP and the
+The catalog version is `public-beta-2026-08-22`, the currency is GBP and the
 billing country is GB. A new wallet receives two free document credits once.
 
 | Pack | Gross consumer total | Credits | Founding bonus |
 |---|---:|---:|---:|
-| Starter | £7.99 | 10 | 5 |
-| Active | £16.99 | 25 | 13 |
-| Power | £34.99 | 60 | 30 |
+| Starter | £4.99 | 10 | 5 |
+| Active | £11.99 | 25 | 13 |
+| Power | £19.99 | 60 | 30 |
 
 One successfully stored CV uses one credit. One successfully stored cover
 letter uses one credit. A paired legacy request reserves and commits two. A

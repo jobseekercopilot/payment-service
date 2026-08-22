@@ -319,7 +319,7 @@ class PaymentSystemDataLedgerIntegrationTest {
                                  "orderId":"%s","stripeSessionId":"cs_test_reset_owner",
                                  "paymentIntentId":"pi_test_reset_owner","paymentStatus":"paid",
                                  "checkoutStatus":"complete","currency":"gbp",
-                                 "amountTotalMinor":799,"billingCountry":"GB",
+                                 "amountTotalMinor":499,"billingCountry":"GB",
                                  "liveMode":false,"eventCreatedAt":"2026-08-15T09:00:00Z"}
                                 """.formatted(ownerOrder)))
                 .andExpect(status().isOk())

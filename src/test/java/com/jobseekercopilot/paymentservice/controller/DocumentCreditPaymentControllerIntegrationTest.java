@@ -110,7 +110,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
         mockMvc.perform(get("/api/v2/payments/catalog")
                         .header(SERVICE_TOKEN, PAYMENT_GATEWAY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.catalogVersion").value("public-beta-2026-08-15"))
+                .andExpect(jsonPath("$.catalogVersion").value("public-beta-2026-08-22"))
                 .andExpect(jsonPath("$.currency").value("GBP"))
                 .andExpect(jsonPath("$.billingCountry").value("GB"))
                 .andExpect(jsonPath("$.taxTreatment").value("VAT_NOT_CHARGED"))
@@ -121,7 +121,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.plans", hasSize(3)))
                 .andExpect(jsonPath("$.plans[0].id").value("starter"))
                 .andExpect(jsonPath("$.plans[0].documentCredits").value(10))
-                .andExpect(jsonPath("$.plans[0].priceMinor").value(799))
+                .andExpect(jsonPath("$.plans[0].priceMinor").value(499))
                 .andExpect(jsonPath("$.plans[0].promotionBonusDocumentCredits").value(5))
                 .andExpect(jsonPath("$.plans[1].id").value("active"))
                 .andExpect(jsonPath("$.plans[1].documentCredits").value(25))
@@ -250,7 +250,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .content(checkoutRequest("active")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.documentCredits").value(25))
-                .andExpect(jsonPath("$.priceMinor").value(1699))
+                .andExpect(jsonPath("$.priceMinor").value(1199))
                 .andExpect(jsonPath("$.taxTreatment").value("VAT_NOT_CHARGED"))
                 .andExpect(jsonPath("$.taxStatus").value("NOT_VAT_REGISTERED"))
                 .andExpect(jsonPath("$.legalEntityType").value("SOLE_TRADER"))
@@ -342,7 +342,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .put("paymentIntentId", "pi_early_refund")
                         .put("currency", "GBP")
                         .put("liveMode", false)
-                        .put("reversalAmountMinor", 799));
+                        .put("reversalAmountMinor", 499));
         mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
                         .header(SERVICE_TOKEN, STRIPE_GATEWAY)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -361,8 +361,8 @@ class DocumentCreditPaymentControllerIntegrationTest {
                                 "cs_early_refund",
                                 "pi_early_refund",
                                 "GB").replace(
-                                        "\"amountTotalMinor\":1699",
-                                        "\"amountTotalMinor\":799")))
+                                        "\"amountTotalMinor\":1199",
+                                        "\"amountTotalMinor\":499")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome")
                         .value("FULFILLED_RECONCILED_REVERSAL"))
@@ -520,7 +520,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
 
         String signedCompletion = settledEvent(
                 "evt_delete_complete", orderId, "cs_test_delete_complete", "pi_delete", "GB")
-                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799");
+                .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499");
         mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
                         .header(SERVICE_TOKEN, STRIPE_GATEWAY)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -559,7 +559,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                                 checkout.sessionId(),
                                 "pi_completion_lock_first",
                                 "GB")
-                        .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799"),
+                        .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499"),
                 ProviderPaymentEventRequest.class);
 
         CountDownLatch completionHasOrderLock = new CountDownLatch(1);
@@ -615,7 +615,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                                 checkout.sessionId(),
                                 "pi_finalizer_lock_first",
                                 "GB")
-                        .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799"),
+                        .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499"),
                 ProviderPaymentEventRequest.class);
 
         CountDownLatch finalizerHasAllOrderLocks = new CountDownLatch(1);
@@ -716,7 +716,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .content(settledEvent(
                                 "evt_paid_before_delete", orderId,
                                 "cs_test_paid_before_delete", "pi_paid_before_delete", "GB")
-                                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799")))
+                                .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orderStatus").value("FULFILLED"));
 
@@ -863,7 +863,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .content(settledEvent(
                                 "evt_expiry_ordering_paid", orderId,
                                 "cs_test_expiry_ordering", "pi_expiry_ordering", "GB")
-                                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799")))
+                                .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("FULFILLED"))
                 .andExpect(jsonPath("$.grantedDocumentCredits").value(15));
@@ -957,7 +957,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(reversalEvent(
                                 "evt_dispute_after_partial", "charge.dispute.created",
-                                disputedOrder, "pi_dispute_ordering", 1699)))
+                                disputedOrder, "pi_dispute_ordering", 1199)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orderStatus").value("DISPUTED"));
         mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
@@ -965,7 +965,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(reversalEvent(
                                 "evt_refund_after_dispute", "charge.refunded",
-                                disputedOrder, "pi_dispute_ordering", 1699)))
+                                disputedOrder, "pi_dispute_ordering", 1199)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orderStatus").value("DISPUTED"));
 
@@ -977,7 +977,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(reversalEvent(
                                 "evt_full_refund_first", "charge.refunded",
-                                refundedOrder, "pi_refund_ordering", 799)))
+                                refundedOrder, "pi_refund_ordering", 499)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orderStatus").value("REFUNDED"));
         mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
@@ -1007,7 +1007,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .andExpect(status().isOk());
         String event = settledEvent(
                 "evt_concurrent_same", orderId, "cs_test_concurrent", "pi_concurrent", "GB")
-                .replace("\"amountTotalMinor\":1699", "\"amountTotalMinor\":799");
+                .replace("\"amountTotalMinor\":1199", "\"amountTotalMinor\":499");
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             CompletableFuture<org.springframework.test.web.servlet.MvcResult> first =
@@ -1047,7 +1047,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                         .put("paymentIntentId", "pi_not_yet_linked")
                         .put("currency", "GBP")
                         .put("liveMode", false)
-                        .put("reversalAmountMinor", 799));
+                        .put("reversalAmountMinor", 499));
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             CompletableFuture<org.springframework.test.web.servlet.MvcResult> first =
@@ -1188,7 +1188,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 "GB");
         if ("starter".equals(plan)) {
             completion = completion.replace(
-                    "\"amountTotalMinor\":1699", "\"amountTotalMinor\":799");
+                    "\"amountTotalMinor\":1199", "\"amountTotalMinor\":499");
         }
         mockMvc.perform(post("/api/v2/payments/provider-events/stripe")
                         .header(SERVICE_TOKEN, STRIPE_GATEWAY)
@@ -1248,7 +1248,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .put("paymentStatus", "paid")
                 .put("checkoutStatus", "complete")
                 .put("currency", "GBP")
-                .put("amountTotalMinor", sessionId.contains("country") ? 799 : 1699)
+                .put("amountTotalMinor", sessionId.contains("country") ? 499 : 1199)
                 .put("billingCountry", country)
                 .put("liveMode", false)
                 .put("eventCreatedAt", Instant.now().toString()));
@@ -1262,7 +1262,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .put("orderId", orderId)
                 .put("paymentIntentId", "pi_test_owned")
                 .put("liveMode", false)
-                .put("reversalAmountMinor", 1699));
+                .put("reversalAmountMinor", 1199));
     }
 
     private RequestPostProcessor paymentGateway(String owner) {
