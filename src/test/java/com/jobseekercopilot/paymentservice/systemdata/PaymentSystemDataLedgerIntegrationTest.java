@@ -17,6 +17,7 @@ import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentGenerationDeliveryRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionCampaignRepository;
 import com.jobseekercopilot.paymentservice.repository.PaymentOrderRepository;
@@ -63,6 +64,7 @@ class PaymentSystemDataLedgerIntegrationTest {
     @Autowired private DocumentCreditWalletRepository documentCreditWalletRepository;
     @Autowired private DocumentCreditTransactionRepository documentCreditTransactionRepository;
     @Autowired private DocumentCreditReservationRepository documentCreditReservationRepository;
+    @Autowired private DocumentGenerationDeliveryRepository documentGenerationDeliveryRepository;
     @Autowired private PaymentOrderRepository paymentOrderRepository;
     @Autowired private PaymentProviderEventRepository paymentProviderEventRepository;
     @Autowired private FoundingPromotionReservationRepository promotionReservationRepository;
@@ -74,6 +76,7 @@ class PaymentSystemDataLedgerIntegrationTest {
         paymentProviderEventRepository.deleteAll();
         promotionReservationRepository.deleteAll();
         paymentOrderRepository.deleteAll();
+        documentGenerationDeliveryRepository.deleteAll();
         documentCreditReservationRepository.deleteAll();
         documentCreditTransactionRepository.deleteAll();
         documentCreditWalletRepository.deleteAll();

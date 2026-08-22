@@ -11,6 +11,7 @@ import com.jobseekercopilot.paymentservice.exception.PaymentApiException;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentGenerationDeliveryRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionCampaignRepository;
 import com.jobseekercopilot.paymentservice.repository.FoundingPromotionReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.PaymentOrderRepository;
@@ -22,6 +23,7 @@ import com.jobseekercopilot.paymentservice.service.ProviderSessionExpiryReconcil
 import com.jobseekercopilot.paymentservice.service.StripeLifecycleClient;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -76,6 +78,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
     @Autowired DocumentCreditReservationRepository reservationRepository;
     @Autowired DocumentCreditTransactionRepository transactionRepository;
     @Autowired DocumentCreditWalletRepository walletRepository;
+    @Autowired DocumentGenerationDeliveryRepository deliveryRepository;
     @Autowired PaymentProviderEventRepository eventRepository;
     @Autowired FoundingPromotionReservationRepository promotionReservationRepository;
     @Autowired PaymentOrderRepository orderRepository;
@@ -93,6 +96,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
         eventRepository.deleteAll();
         promotionReservationRepository.deleteAll();
         orderRepository.deleteAll();
+        deliveryRepository.deleteAll();
         reservationRepository.deleteAll();
         transactionRepository.deleteAll();
         walletRepository.deleteAll();
@@ -170,6 +174,7 @@ class DocumentCreditPaymentControllerIntegrationTest {
 
     @Test
     void successfulDocumentCostsExactlyOneAndFailureReleaseCostsNothing() throws Exception {
+        UUID deliveredDocumentId = UUID.randomUUID();
         mockMvc.perform(get("/api/v2/payments/wallet").with(paymentGateway("owner-doc")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceDocumentCredits").value(2));
@@ -200,12 +205,23 @@ class DocumentCreditPaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.balanceAfterReservation").value(1));
 
         mockMvc.perform(post("/api/v2/payments/document-credit-reservations/{id}/commit", reservationId)
-                        .with(documentGateway("owner-doc")))
+                        .with(documentGateway("owner-doc"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"deliveries":[{"documentId":"%s","documentType":"CV"}]}
+                                """.formatted(deliveredDocumentId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.spentDocumentCredits").value(1))
+                .andExpect(jsonPath("$.deliveredDocuments[0].documentId")
+                        .value(deliveredDocumentId.toString()))
+                .andExpect(jsonPath("$.deliveredDocuments[0].documentType").value("CV"))
                 .andExpect(jsonPath("$.wallet.balanceDocumentCredits").value(1));
         mockMvc.perform(post("/api/v2/payments/document-credit-reservations/{id}/commit", reservationId)
-                        .with(documentGateway("owner-doc")))
+                        .with(documentGateway("owner-doc"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"deliveries":[{"documentId":"%s","documentType":"CV"}]}
+                                """.formatted(deliveredDocumentId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.wallet.balanceDocumentCredits").value(1));
 
@@ -232,6 +248,61 @@ class DocumentCreditPaymentControllerIntegrationTest {
         mockMvc.perform(get("/api/v2/payments/transactions").with(paymentGateway("owner-doc")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.transactions", hasSize(5)));
+    }
+
+    @Test
+    void deliveredDocumentCanConsumeTheAllowanceOnlyOnce() throws Exception {
+        UUID deliveredDocumentId = UUID.randomUUID();
+        String first = mockMvc.perform(post("/api/v2/payments/document-credit-reservations")
+                        .with(documentGateway("owner-exact-document"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"operationKey":"generation-first:cv","documentCredits":1,
+                                 "regeneration":false,"referenceType":"GENERATION_OUTPUT",
+                                 "referenceId":"generation-first:CV"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        UUID firstReservation = UUID.fromString(
+                objectMapper.readTree(first).path("reservationId").asText());
+        String delivery = """
+                {"deliveries":[{"documentId":"%s","documentType":"CV"}]}
+                """.formatted(deliveredDocumentId);
+        mockMvc.perform(post(
+                        "/api/v2/payments/document-credit-reservations/{id}/commit",
+                        firstReservation)
+                        .with(documentGateway("owner-exact-document"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(delivery))
+                .andExpect(status().isOk());
+
+        String second = mockMvc.perform(post("/api/v2/payments/document-credit-reservations")
+                        .with(documentGateway("owner-exact-document"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"operationKey":"generation-second:cv","documentCredits":1,
+                                 "regeneration":true,"referenceType":"GENERATION_OUTPUT",
+                                 "referenceId":"generation-second:CV"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        UUID secondReservation = UUID.fromString(
+                objectMapper.readTree(second).path("reservationId").asText());
+        mockMvc.perform(post(
+                        "/api/v2/payments/document-credit-reservations/{id}/commit",
+                        secondReservation)
+                        .with(documentGateway("owner-exact-document"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(delivery))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code")
+                        .value("DELIVERED_DOCUMENT_ALREADY_CONSUMED"));
+
+        mockMvc.perform(get("/api/v2/payments/wallet")
+                        .with(paymentGateway("owner-exact-document")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balanceDocumentCredits").value(0))
+                .andExpect(jsonPath("$.lifetimeSpentDocumentCredits").value(1));
     }
 
     @Test

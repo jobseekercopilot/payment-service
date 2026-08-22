@@ -7,6 +7,7 @@ import com.jobseekercopilot.paymentservice.dto.CreateDocumentCreditReservationRe
 import com.jobseekercopilot.paymentservice.dto.CreatePaymentOrderRequest;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditCatalogResponse;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditCommitResponse;
+import com.jobseekercopilot.paymentservice.dto.CommitDocumentGenerationRequest;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditReleaseRequest;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditReleaseResponse;
 import com.jobseekercopilot.paymentservice.dto.DocumentCreditReservationResponse;
@@ -141,8 +142,9 @@ public class DocumentCreditPaymentController {
                     in = ParameterIn.HEADER,
                     required = true)
             @RequestAttribute(PaymentIdentityFilter.OWNER_ATTRIBUTE) String owner,
-            @PathVariable UUID reservationId) {
-        return documentCreditService.commit(owner, reservationId);
+            @PathVariable UUID reservationId,
+            @Valid @RequestBody CommitDocumentGenerationRequest request) {
+        return documentCreditService.commit(owner, reservationId, request);
     }
 
     @PostMapping("/document-credit-reservations/{reservationId}/release")

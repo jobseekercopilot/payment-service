@@ -1,4 +1,4 @@
-# Public-beta document credits and payment operations
+# Public-beta document generations and payment operations
 
 This is the release and incident runbook for the public-beta commercial model.
 It supersedes AI-token commercial assumptions in the historical readiness
@@ -7,25 +7,35 @@ audit. It does not authorise a deployment or real charges.
 ## Server-owned offer
 
 The catalog version is `public-beta-2026-08-22`, the currency is GBP and the
-billing country is GB. A new wallet receives two free document credits once.
+billing country is GB. A new account receives an allowance of two free document
+generations once. `documentCredits` remains an internal/API compatibility field;
+it is not customer-facing product language.
 
-| Pack | Gross consumer total | Credits | Founding bonus |
+| Pack | Gross consumer total | Document generations | Founding bonus generations |
 |---|---:|---:|---:|
 | Starter | £4.99 | 10 | 5 |
 | Active | £11.99 | 25 | 13 |
 | Power | £19.99 | 60 | 30 |
 
-One successfully stored CV uses one credit. One successfully stored cover
-letter uses one credit. A paired legacy request reserves and commits two. A
+One successfully delivered CV uses one generation. One successfully delivered
+cover letter uses one generation. A paired legacy request reserves and commits two. A
 regeneration is detected from prior durable delivery for the saved job,
 identified as a regeneration and charged in exactly the same way. Model-token
 estimates and actual usage are provider telemetry/cost data only; they never
-change document-credit consumption. A deterministic no-charge fallback is
-stored and its hold is released.
+change allowance consumption. A deterministic fallback that is successfully
+delivered consumes one generation exactly like provider-generated output.
+Failure before durable delivery releases the reservation and consumes nothing.
 
-Existing AI-token value migrates once with `ceil(balance_tokens / 10000)`.
-The migrated-token figure is retained only as migration evidence. New runtime
-spend never consults token usage or the 10,000-unit conversion.
+Each successful commit carries the exact generated document UUID and document
+type. Payment stores a unique delivery-to-consumption record and an append-only
+spend entry referencing that UUID. A replay with identical evidence is
+idempotent; a different document or reuse of a delivered UUID is rejected.
+
+Before launch, existing AI-token value migrates once with
+`ceil(balance_tokens / 10000)`. This conversion is a technical migration policy,
+not customer-visible pricing. The migrated-token figure is retained only as
+migration evidence. New runtime spend never consults token usage or the
+10,000-unit conversion.
 
 Displayed prices are fixed gross consumer totals. `taxTreatment` is either
 `VAT_NOT_CHARGED` or `VAT_INCLUDED`; `taxStatus` is `NOT_CONFIGURED`,

@@ -77,7 +77,7 @@ payment:
   pricing-plans:
     - id: starter
       name: Starter
-      description: Up to 5 complete CV and cover-letter applications
+      description: 10 document generations — up to 5 complete applications
       token-amount: 100000
       document-credits: 10
       price-gbp-pence: 499
@@ -85,7 +85,7 @@ payment:
       sort-order: 1
     - id: active
       name: Active
-      description: 25 tailored document credits
+      description: 25 tailored document generations
       token-amount: 250000
       document-credits: 25
       price-gbp-pence: 1199
@@ -93,7 +93,7 @@ payment:
       sort-order: 2
     - id: power
       name: Power
-      description: 60 tailored document credits
+      description: 60 tailored document generations
       token-amount: 600000
       document-credits: 60
       price-gbp-pence: 1999

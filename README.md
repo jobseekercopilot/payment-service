@@ -8,9 +8,11 @@
 
 See the central [payment journey/status](https://docs.jobseekercopilot.com/journeys/reporting-payments/), [payment domain model](https://docs.jobseekercopilot.com/data/domain-models/), and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
 
-Spring Boot service for the Job Seeker Copilot document-credit wallet,
-transaction, reservation and owned payment-order model. The inherited AI-token
-ledger remains available for migration and backward compatibility only.
+Spring Boot service for the Job Seeker Copilot document-generation allowance,
+transaction, reservation and owned payment-order model. Historical
+`documentCredit` field names remain internal/API compatibility terms. The
+inherited AI-token ledger remains available for migration and backward
+compatibility only.
 
 See [`docs/PUBLIC_BETA_DOCUMENT_CREDITS.md`](docs/PUBLIC_BETA_DOCUMENT_CREDITS.md)
 for the current public-beta commercial contract, release gates, reconciliation
@@ -52,12 +54,12 @@ mvn -B --no-transfer-progress clean verify
 See [`docs/CONTRACT_GOVERNANCE.md`](docs/CONTRACT_GOVERNANCE.md) for ownership,
 versioning and consumer-pin rules.
 
-Contract version 3.2.1 adds provider-confirmed Checkout expiry, two-phase
-account revocation and the `REVOCATION_PENDING` wallet lifecycle state to the
-3.2.0 document-credit catalog, wallet, order, provider-event and
-account-lifecycle boundaries. Existing v1 Payment and
-fixture operations remain compatible but cannot mutate commercial value in
-production through demo or legacy Stripe confirmation routes.
+Contract version 3.4.0 requires every delivered CV or cover letter to be bound
+to its exact generation-consumption record. It preserves the existing v2 field
+and route names for compatibility while making delivery—not provider token
+usage—the only consumption boundary. Existing v1 Payment and fixture operations
+remain compatible but cannot mutate commercial value in production through
+demo or legacy Stripe confirmation routes.
 
 The full test suite needs a Docker-compatible runtime because it proves the
 ledger against PostgreSQL 15, including dump/restore and append-only enforcement.
