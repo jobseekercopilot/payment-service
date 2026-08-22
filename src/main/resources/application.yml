@@ -5,41 +5,98 @@ spring:
   application:
     name: payment-service
   datasource:
-    url: jdbc:h2:mem:paymentdb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${PAYMENT_DATABASE_URL}
+    driver-class-name: org.postgresql.Driver
+    username: ${PAYMENT_DATABASE_USERNAME}
+    password: ${PAYMENT_DATABASE_PASSWORD}
   h2:
     console:
-      enabled: true
-      path: /h2-console
+      enabled: false
+  flyway:
+    enabled: true
+    locations:
+      - classpath:db/migration/common
+      - classpath:db/migration/postgresql-live
+    validate-migration-naming: true
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
 
 payment:
+  database:
+    production-safety-check: true
+  ledger:
+    verify-on-startup: ${PAYMENT_LEDGER_VERIFY_ON_STARTUP:true}
+  reservation-recovery:
+    enabled: ${PAYMENT_RESERVATION_RECOVERY_ENABLED:true}
+    ttl: ${PAYMENT_RESERVATION_TTL:PT15M}
+    interval: ${PAYMENT_RESERVATION_RECOVERY_INTERVAL:PT30S}
+    batch-size: ${PAYMENT_RESERVATION_RECOVERY_BATCH_SIZE:100}
+  security:
+    payment-gateway-token: ${PAYMENT_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
+    document-generation-gateway-token: ${DOCUMENT_GENERATION_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
+    cv-cover-letter-token: ${CV_COVER_LETTER_TO_PAYMENT_SERVICE_TOKEN:}
+    stripe-gateway-token: ${STRIPE_GATEWAY_TO_PAYMENT_SERVICE_TOKEN:}
+    account-lifecycle-token: ${ACCOUNT_LIFECYCLE_TO_PAYMENT_SERVICE_TOKEN:}
   free-starter-tokens: ${FREE_STARTER_TOKENS:20000}
+  free-document-credits: ${FREE_DOCUMENT_CREDITS:2}
+  catalog-version: ${PAYMENT_CATALOG_VERSION:public-beta-2026-08-22}
+  currency: GBP
+  billing-country: GB
+  tax-treatment: ${PAYMENT_TAX_TREATMENT:VAT_NOT_CHARGED}
+  tax-status: ${PAYMENT_TAX_STATUS:NOT_CONFIGURED}
+  demo-purchase-enabled: ${PAYMENT_DEMO_PURCHASE_ENABLED:false}
+  legacy-stripe-confirmation-enabled: ${PAYMENT_LEGACY_STRIPE_CONFIRMATION_ENABLED:false}
+  checkout:
+    enabled: ${PAYMENT_CHECKOUT_ENABLED:false}
+    release-authorised: ${PAYMENT_CHECKOUT_RELEASE_AUTHORISED:false}
+    provider-live-mode-expected: ${PAYMENT_PROVIDER_LIVE_MODE_EXPECTED:false}
+    order-ttl: ${PAYMENT_CHECKOUT_ORDER_TTL:PT1H}
+  consumer-terms:
+    version: ${PAYMENT_CONSUMER_TERMS_VERSION:uk-consumer-terms-2026-08-15}
+  legal-entity:
+    type: ${PAYMENT_LEGAL_ENTITY_TYPE:NOT_CONFIGURED}
+    configuration-version: ${PAYMENT_LEGAL_ENTITY_CONFIGURATION_VERSION:}
+    reviewed: ${PAYMENT_LEGAL_ENTITY_REVIEWED:false}
+  promotion:
+    id: founding-200
+    enabled: ${PAYMENT_FOUNDING_PROMOTION_ENABLED:true}
+    release-authorised: ${PAYMENT_FOUNDING_PROMOTION_RELEASE_AUTHORISED:false}
+    customer-limit: 200
+    bonus-percent: 50
+  retention:
+    financial-record-years: ${PAYMENT_FINANCIAL_RECORD_RETENTION_YEARS:7}
+  account-lifecycle:
+    stripe-gateway-url: ${PAYMENT_STRIPE_LIFECYCLE_GATEWAY_URL:http://localhost:8100}
+    stripe-gateway-token: ${PAYMENT_SERVICE_TO_STRIPE_GATEWAY_LIFECYCLE_TOKEN:}
+    provider-session-recovery-enabled: ${PAYMENT_PROVIDER_SESSION_RECOVERY_ENABLED:true}
+    provider-session-recovery-interval: ${PAYMENT_PROVIDER_SESSION_RECOVERY_INTERVAL:PT30S}
+    provider-session-recovery-batch-size: ${PAYMENT_PROVIDER_SESSION_RECOVERY_BATCH_SIZE:50}
   pricing-plans:
     - id: starter
       name: Starter
-      description: Good for trying AI features
+      description: 10 document generations — up to 5 complete applications
       token-amount: 100000
-      price-gbp-pence: 799
+      document-credits: 10
+      price-gbp-pence: 499
       active: true
       sort-order: 1
-    - id: standard
-      name: Standard
-      description: Useful for active job searching
+    - id: active
+      name: Active
+      description: 25 tailored document generations
       token-amount: 250000
-      price-gbp-pence: 1699
+      document-credits: 25
+      price-gbp-pence: 1199
       active: true
       sort-order: 2
     - id: power
-      name: Pro
-      description: For heavy AI usage
+      name: Power
+      description: 60 tailored document generations
       token-amount: 600000
-      price-gbp-pence: 3499
+      document-credits: 60
+      price-gbp-pence: 1999
       active: true
       sort-order: 3
 
@@ -54,3 +111,8 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"
   level:
     com.jobseekercopilot: ${APP_LOG_LEVEL:INFO}
+
+environment-data:
+  enabled: ${ENVIRONMENT_DATA_ENABLED:false}
+  isolated-database: ${ENVIRONMENT_DATA_ISOLATED_DATABASE:false}
+  token: ${ENVIRONMENT_DATA_TOKEN:}

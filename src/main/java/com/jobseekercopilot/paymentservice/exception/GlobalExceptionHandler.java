@@ -10,11 +10,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-    @ExceptionHandler(MissingUserIdException.class)
-    ResponseEntity<ErrorResponse> missingUserId(MissingUserIdException exception) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ErrorResponse.builder()
-                .status(HttpStatus.UNAUTHORIZED.value())
-                .message("Missing X-User-Id header")
+    @ExceptionHandler(PaymentApiException.class)
+    ResponseEntity<ErrorResponse> paymentApi(PaymentApiException exception) {
+        return ResponseEntity.status(exception.getStatus()).body(ErrorResponse.builder()
+                .status(exception.getStatus().value())
+                .code(exception.getCode())
+                .message(exception.getMessage())
                 .timestamp(LocalDateTime.now())
                 .build());
     }

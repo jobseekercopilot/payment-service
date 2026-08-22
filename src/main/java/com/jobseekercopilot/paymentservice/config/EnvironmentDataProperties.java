@@ -7,7 +7,9 @@ import java.util.List;
 @ConfigurationProperties(prefix = "environment-data")
 public class EnvironmentDataProperties {
     private boolean enabled = false;
-    private List<String> allowedEnvironments = List.of("local", "test", "demo", "default");
+    private boolean isolatedDatabase = false;
+    private List<String> allowedEnvironments = List.of("local", "test", "demo");
+    private String token = "";
 
     public boolean isEnabled() {
         return enabled;
@@ -17,11 +19,27 @@ public class EnvironmentDataProperties {
         this.enabled = enabled;
     }
 
+    public boolean isIsolatedDatabase() {
+        return isolatedDatabase;
+    }
+
+    public void setIsolatedDatabase(boolean isolatedDatabase) {
+        this.isolatedDatabase = isolatedDatabase;
+    }
+
     public List<String> getAllowedEnvironments() {
         return allowedEnvironments;
     }
 
     public void setAllowedEnvironments(List<String> allowedEnvironments) {
         this.allowedEnvironments = allowedEnvironments;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
     }
 }

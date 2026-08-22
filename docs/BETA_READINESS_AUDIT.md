@@ -1,4 +1,8 @@
-# Payment Service beta-readiness audit
+# Payment Service beta-readiness audit (historical snapshot)
+
+This 2026-07-23 audit predates the document-credit, owned-order, verified
+webhook and lifecycle work. See `PUBLIC_BETA_DOCUMENT_CREDITS.md` for the
+current release contract and remaining legal/release decisions.
 
 Audit date: 2026-07-23  
 Decision: **Not ready for private beta**
@@ -8,44 +12,60 @@ financial ledger ready for production use.
 
 ## Verified behavior
 
-- Creates one token wallet per supplied user ID and grants starter tokens.
+- Creates one token wallet per trusted payment-owner context and grants starter
+  tokens.
 - Lists configured GBP pricing plans and a limited recent transaction history.
 - Supports demo purchase, Stripe purchase confirmation, estimation and
   reserve/commit/release workflows.
-- Uses transactions around service methods and bounds the transaction-history
+- Uses explicit ledger transaction boundaries and bounds the transaction-history
   limit to 1–100.
-- `mvn -q clean verify` passed 12 tests with no failures/errors/skips.
+- `mvn -B --no-transfer-progress clean verify` passed 51 tests with no
+  failures/errors/skips, including PostgreSQL migration and recovery evidence.
 
 ## Critical findings
 
-### Unauthenticated balance ownership
+### Trusted service and owner boundary delivered
 
-Browser/service-supplied `X-User-Id` values control wallet, ledger and reservation
-scope. `confirm-stripe-purchase` accepts a JSON `userId` and grants tokens without
-authentication or service authorization. Reservation lookup checks equality only
-against another supplied user ID.
+PAY-03 requires route-authorized service identities and a trusted
+`X-Payment-Owner` context. The caller-controlled legacy `X-User-Id` header is
+rejected, and Stripe confirmation requires the Stripe Gateway service identity.
+The payment route remains disabled while the remaining provider and ledger
+controls are delivered.
 
-### Non-durable database
+### Durable ledger foundation delivered; environment recovery remains
 
-The default database is in-memory H2 with an enabled console, `ddl-auto=update` and
-SQL logging. No migration, durable encrypted database, backup/restore or retention
-baseline exists.
+PAY-08 replaces the runtime H2 default with PostgreSQL 15, reviewed Flyway
+migrations, explicit constraints, a live append-only trigger, signed deltas,
+database-assigned entry order, UTC timestamps and fail-closed startup
+reconciliation. Automated PostgreSQL tests prove migrations, persistence,
+invariants, append-only enforcement and dump/restore reconstruction. Deployment
+database provisioning, scheduled encrypted backups, retention and environment
+restore rehearsals still require platform delivery before beta.
 
-### Concurrent double credit/spend
+### Wallet and reservation concurrency controls delivered
 
-Wallet rows have no optimistic version or locking strategy. Starter-wallet
-creation, reservation, commit/release and purchase updates can race. Stripe
-idempotency performs a find-then-insert with no unique database constraint on the
-checkout-session reference, so concurrent webhook delivery can double-credit.
+PAY-09 adds pessimistic wallet/reservation row locks, optimistic versions,
+race-safe atomic starter-wallet provisioning, exact arithmetic and retry-safe,
+mutually exclusive commit/release transitions. Real PostgreSQL stress tests
+prove one starter grant under 12 simultaneous first-use requests, no reservation
+overspend, no lost concurrent credits, one terminal transition and reconciled
+wallet/ledger state.
 
-### Ledger semantics and reconciliation
+Stripe idempotency still performs a find-then-insert with no globally unique
+provider fulfillment invariant. Different wallets can race the same provider
+session, so PAY-07 remains a P0 beta blocker for real payment traffic.
 
-Reservations deduct the balance, while the later visible SPEND transaction records
-equal before/after balances. The client hides reservation/release entries, so the
-displayed ledger cannot independently reconcile balance movement. No immutable
-ledger invariant, operation key, expiry, stuck-reservation cleanup or reconciliation
-job exists. A failed release in CV generation is swallowed and can leave credit
-reserved.
+### Reservation recovery controls delivered
+
+PAY-10 gives every reservation a required owner-scoped operation key, expiry and
+durable transition/reconciliation evidence. Identical lost-response retries
+replay the original creation ledger balance; conflicting key reuse fails closed.
+An owner-scoped lookup resolves ambiguous commit/release outcomes. A bounded
+scheduled reconciler releases expired holds in independent transactions and
+durably flags failed attempts for retry. Real PostgreSQL tests cover duplicate
+create, conflicting reuse, expiry, recovery failure evidence and commit/expiry
+races. The coordinated CV consumer pin and compensation behavior must be merged
+before PAY-10 itself is complete.
 
 ### Untrusted Stripe confirmation
 
@@ -56,9 +76,10 @@ can attempt to grant credit.
 
 ### Unsafe non-production controls
 
-The browser-facing demo purchase mutates balances without a mode guard. Internal
-System Data endpoints can seed arbitrary entity graphs when enabled; their default
-allowed environments include `default` and no service authentication is present.
+The browser-facing demo purchase still mutates balances without a mode guard.
+System Data mutation is now restricted to explicitly enabled, isolated,
+non-production databases, and payment fixtures must form a reconciled ledger.
+Broader service authentication and demo-mode controls remain required.
 
 ### Privacy and licensing
 
@@ -70,19 +91,16 @@ proprietary; this mismatch must be corrected before publication/use.
 
 | Capability | Result |
 |---|---|
-| Wallet/starter grant | Incomplete; race and identity risks |
+| Wallet/starter grant | Concurrency-safe ledger foundation delivered |
 | Pricing | Incomplete; snapshot/disclosure rules absent |
 | Purchase confirmation | Unsafe |
-| Reservation lifecycle | Incomplete; concurrency/expiry/reconciliation absent |
-| Transaction history | Incomplete; no cursor and misleading visible ledger |
+| Reservation lifecycle | Producer expiry/recovery delivered; coordinated consumer merge pending |
+| Transaction history | Signed/reconcilable; cursor pagination outstanding |
 | Refund/chargeback | Model placeholders only; behavior absent |
-| Durable storage/migrations | Absent but required |
+| Durable storage/migrations | Code foundation delivered; environment recovery evidence outstanding |
 | Observability/operations | Basic logs/health only |
 
-Missing tests include validated authentication, cross-user access, concurrent
-purchase/reserve/commit/release, unique idempotency, refund/dispute, expiry,
-reconciliation, database migration, privacy redaction and full browser/provider
-journeys.
+Missing tests include authoritative concurrent provider fulfillment,
+refund/dispute, privacy redaction and full browser/provider journeys.
 
-The Payments epic contains focused follow-up issues. All remain Backlog and no
-issue was implemented during this audit.
+The Payments epic contains the remaining focused beta-readiness issues.

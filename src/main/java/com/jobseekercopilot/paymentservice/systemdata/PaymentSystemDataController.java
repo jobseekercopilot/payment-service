@@ -1,10 +1,23 @@
 package com.jobseekercopilot.paymentservice.systemdata;
 
+import com.jobseekercopilot.paymentservice.entity.AiTokenReservation;
+import com.jobseekercopilot.paymentservice.entity.AiTokenTransaction;
 import com.jobseekercopilot.paymentservice.repository.AiTokenReservationRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenTransactionRepository;
 import com.jobseekercopilot.paymentservice.repository.AiTokenWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditReservationRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditTransactionRepository;
+import com.jobseekercopilot.paymentservice.repository.DocumentCreditWalletRepository;
+import com.jobseekercopilot.paymentservice.repository.FoundingPromotionReservationRepository;
+import com.jobseekercopilot.paymentservice.repository.PaymentOrderRepository;
+import com.jobseekercopilot.paymentservice.repository.PaymentProviderEventRepository;
+import com.jobseekercopilot.paymentservice.service.DocumentCreditWalletProvisioner;
+import com.jobseekercopilot.paymentservice.service.LedgerReconciliationService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,32 +28,76 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/internal/system-data")
+@SecurityRequirement(name = "environmentDataToken")
+@Validated
 public class PaymentSystemDataController {
     private final EnvironmentDataGuard guard;
     private final AiTokenWalletRepository walletRepository;
     private final AiTokenTransactionRepository transactionRepository;
     private final AiTokenReservationRepository reservationRepository;
+    private final FixtureLedgerSeedValidator fixtureLedgerSeedValidator;
+    private final LedgerReconciliationService reconciliationService;
+    private final EnvironmentLedgerReset environmentLedgerReset;
+    private final DocumentCreditWalletRepository documentCreditWalletRepository;
+    private final DocumentCreditTransactionRepository documentCreditTransactionRepository;
+    private final DocumentCreditReservationRepository documentCreditReservationRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
+    private final PaymentProviderEventRepository paymentProviderEventRepository;
+    private final FoundingPromotionReservationRepository promotionReservationRepository;
+    private final DocumentCreditWalletProvisioner documentCreditWalletProvisioner;
 
     public PaymentSystemDataController(
             EnvironmentDataGuard guard,
             AiTokenWalletRepository walletRepository,
             AiTokenTransactionRepository transactionRepository,
-            AiTokenReservationRepository reservationRepository) {
+            AiTokenReservationRepository reservationRepository,
+            FixtureLedgerSeedValidator fixtureLedgerSeedValidator,
+            LedgerReconciliationService reconciliationService,
+            EnvironmentLedgerReset environmentLedgerReset,
+            DocumentCreditWalletRepository documentCreditWalletRepository,
+            DocumentCreditTransactionRepository documentCreditTransactionRepository,
+            DocumentCreditReservationRepository documentCreditReservationRepository,
+            PaymentOrderRepository paymentOrderRepository,
+            PaymentProviderEventRepository paymentProviderEventRepository,
+            FoundingPromotionReservationRepository promotionReservationRepository,
+            DocumentCreditWalletProvisioner documentCreditWalletProvisioner) {
         this.guard = guard;
         this.walletRepository = walletRepository;
         this.transactionRepository = transactionRepository;
         this.reservationRepository = reservationRepository;
+        this.fixtureLedgerSeedValidator = fixtureLedgerSeedValidator;
+        this.reconciliationService = reconciliationService;
+        this.environmentLedgerReset = environmentLedgerReset;
+        this.documentCreditWalletRepository = documentCreditWalletRepository;
+        this.documentCreditTransactionRepository = documentCreditTransactionRepository;
+        this.documentCreditReservationRepository = documentCreditReservationRepository;
+        this.paymentOrderRepository = paymentOrderRepository;
+        this.paymentProviderEventRepository = paymentProviderEventRepository;
+        this.promotionReservationRepository = promotionReservationRepository;
+        this.documentCreditWalletProvisioner = documentCreditWalletProvisioner;
     }
 
+    @Transactional
     @PostMapping("/seed/payments")
     public ResponseEntity<SystemDataResult> seedPayments(@RequestBody SystemDataPaymentSeedRequest request) {
         guard.requireEnabled();
-        var wallet = walletRepository.save(request.wallet());
-        var transactions = transactionRepository.saveAll(request.transactions() == null ? List.of() : request.transactions());
-        var reservations = reservationRepository.saveAll(request.reservations() == null ? List.of() : request.reservations());
+        fixtureLedgerSeedValidator.validate(request);
+        var wallet = walletRepository.saveAndFlush(request.wallet());
+        var transactionsToSave =
+                request.transactions() == null ? List.<AiTokenTransaction>of() : request.transactions();
+        transactionsToSave.forEach(transaction -> transaction.setWalletId(wallet.getId()));
+        var reservationsToSave =
+                request.reservations() == null ? List.<AiTokenReservation>of() : request.reservations();
+        reservationsToSave.forEach(reservation -> reservation.setWalletId(wallet.getId()));
+        var transactions = transactionRepository.saveAllAndFlush(transactionsToSave);
+        var reservations = reservationRepository.saveAllAndFlush(reservationsToSave);
+        if (!reconciliationService.reconcile(wallet.getId()).reconciled()) {
+            throw new IllegalStateException("Isolated payment fixture failed ledger reconciliation");
+        }
         return ResponseEntity.ok(SystemDataResult.success("SEED", 1 + transactions.size() + reservations.size(), guard.activeEnvironment(), Map.of(
                 "userId", wallet.getUserId(),
                 "balanceTokens", wallet.getBalanceTokens(),
@@ -52,31 +109,139 @@ public class PaymentSystemDataController {
     @DeleteMapping("/scenario/{scenarioId}/payments/{userId}")
     public ResponseEntity<SystemDataResult> resetPayments(@PathVariable String scenarioId, @PathVariable String userId) {
         guard.requireEnabled();
-        int transactions = transactionRepository.findByUserId(userId).size();
+        return resetPaymentsForOwner(scenarioId, userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> resetPaymentsForOwner(
+            String scenarioId, String userId, Map<String, Object> extraDetails) {
         int reservations = reservationRepository.findByUserId(userId).size();
         int wallets = walletRepository.findByUserId(userId).isPresent() ? 1 : 0;
         reservationRepository.deleteByUserId(userId);
-        transactionRepository.deleteByUserId(userId);
+        int transactions = environmentLedgerReset.deleteOwnerLedger(userId);
         walletRepository.deleteByUserId(userId);
-        return ResponseEntity.ok(SystemDataResult.success("RESET", wallets + transactions + reservations, guard.activeEnvironment(), Map.of(
-                "scenarioId", scenarioId,
-                "userId", userId,
-                "wallets", wallets,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("scenarioId", scenarioId);
+        details.put("userId", userId);
+        details.put("wallets", wallets);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET", wallets + transactions + reservations, guard.activeEnvironment(), details));
     }
 
     @GetMapping("/verify/payments/{userId}")
     public ResponseEntity<SystemDataResult> verifyPayments(@PathVariable String userId) {
         guard.requireEnabled();
+        return verifyPaymentsForOwner(userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> verifyPaymentsForOwner(
+            String userId, Map<String, Object> extraDetails) {
         int transactions = transactionRepository.findByUserId(userId).size();
         int reservations = reservationRepository.findByUserId(userId).size();
         long balance = walletRepository.findByUserId(userId).map(wallet -> wallet.getBalanceTokens()).orElse(0L);
-        return ResponseEntity.ok(SystemDataResult.success("VERIFY", transactions + reservations + (balance > 0 ? 1 : 0), guard.activeEnvironment(), Map.of(
-                "userId", userId,
-                "walletExists", walletRepository.findByUserId(userId).isPresent(),
-                "balanceTokens", balance,
-                "ledgerEntries", transactions,
-                "reservations", reservations)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("userId", userId);
+        details.put("walletExists", walletRepository.findByUserId(userId).isPresent());
+        details.put("balanceTokens", balance);
+        details.put("ledgerEntries", transactions);
+        details.put("reservations", reservations);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY", transactions + reservations + (balance > 0 ? 1 : 0),
+                guard.activeEnvironment(), details));
+    }
+
+    @Transactional
+    @DeleteMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        String owner = userId.toString();
+        OwnerRuntimePaymentSummary summary = ownerSummary(owner);
+        environmentLedgerReset.deleteOwnerDocumentCreditData(owner);
+        reservationRepository.deleteByUserId(owner);
+        environmentLedgerReset.deleteOwnerLedger(owner);
+        walletRepository.deleteByUserId(owner);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    @PostMapping(
+            "/v2/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}/document-credit-wallet")
+    public ResponseEntity<SystemDataResult> seedRuntimeDocumentCreditWallet(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        documentCreditWalletProvisioner.ensureWallet(userId.toString());
+        OwnerRuntimePaymentSummary summary = ownerSummary(userId.toString());
+        return ResponseEntity.ok(SystemDataResult.success(
+                "SEED_RUNTIME_DOCUMENT_CREDIT_WALLET",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    @GetMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        OwnerRuntimePaymentSummary summary = ownerSummary(userId.toString());
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    private OwnerRuntimePaymentSummary ownerSummary(String ownerId) {
+        var legacyWallet = walletRepository.findByUserId(ownerId);
+        var documentWallet = documentCreditWalletRepository.findByUserId(ownerId);
+        List<com.jobseekercopilot.paymentservice.entity.PaymentOrder> orders =
+                paymentOrderRepository.findByUserIdOrderByCreatedAtAsc(ownerId);
+        List<UUID> orderIds = orders.stream()
+                .map(com.jobseekercopilot.paymentservice.entity.PaymentOrder::getId)
+                .toList();
+        return new OwnerRuntimePaymentSummary(
+                legacyWallet.isPresent() ? 1 : 0,
+                documentWallet.isPresent() ? 1 : 0,
+                transactionRepository.findByUserId(ownerId).size()
+                        + documentCreditTransactionRepository
+                        .findByUserIdOrderBySequenceNumberAsc(ownerId).size(),
+                reservationRepository.findByUserId(ownerId).size()
+                        + documentCreditReservationRepository
+                        .findByUserIdOrderByCreatedAtAsc(ownerId).size(),
+                legacyWallet.map(value -> value.getBalanceTokens()).orElse(0L),
+                documentWallet.map(value -> value.getBalanceCredits()).orElse(0),
+                orders.size(),
+                orderIds.isEmpty() ? 0 : paymentProviderEventRepository
+                        .findByOrderIdInOrderByReceivedAtAsc(orderIds).size(),
+                (int) orderIds.stream()
+                        .filter(id -> promotionReservationRepository.findByOrderId(id).isPresent())
+                        .count());
     }
 }
