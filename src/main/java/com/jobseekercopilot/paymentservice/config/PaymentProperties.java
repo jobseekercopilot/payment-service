@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
 public class PaymentProperties {
     private long freeStarterTokens = 20000;
     private int freeDocumentCredits = 2;
-    private String catalogVersion = "public-beta-2026-08-15";
+    private String catalogVersion = "public-beta-2026-08-22";
     private String currency = "GBP";
     private String billingCountry = "GB";
     private TaxTreatment taxTreatment = TaxTreatment.VAT_NOT_CHARGED;

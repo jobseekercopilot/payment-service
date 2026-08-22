@@ -45,9 +45,9 @@ public class PaymentCommercialConfigurationVerifier implements ApplicationRunner
         }
         Map<String, PaymentProperties.PricingPlan> plans = properties.activePricingPlans().stream()
                 .collect(Collectors.toMap(PaymentProperties.PricingPlan::getId, Function.identity()));
-        requirePlan(plans, "starter", 10, 799);
-        requirePlan(plans, "active", 25, 1699);
-        requirePlan(plans, "power", 60, 3499);
+        requirePlan(plans, "starter", 10, 499);
+        requirePlan(plans, "active", 25, 1199);
+        requirePlan(plans, "power", 60, 1999);
         if (plans.size() != 3) {
             throw new IllegalStateException("Only the approved public-beta packs may be active");
         }

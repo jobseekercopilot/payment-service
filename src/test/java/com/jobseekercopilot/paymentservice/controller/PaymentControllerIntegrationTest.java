@@ -84,13 +84,13 @@ class PaymentControllerIntegrationTest {
                 .andExpect(jsonPath("$.plans", hasSize(3)))
                 .andExpect(jsonPath("$.plans[0].id").value("starter"))
                 .andExpect(jsonPath("$.plans[0].tokenAmount").value(100000))
-                .andExpect(jsonPath("$.plans[0].priceGbpPence").value(799))
+                .andExpect(jsonPath("$.plans[0].priceGbpPence").value(499))
                 .andExpect(jsonPath("$.plans[1].name").value("Standard"))
                 .andExpect(jsonPath("$.plans[1].tokenAmount").value(250000))
-                .andExpect(jsonPath("$.plans[1].priceGbpPence").value(1699))
+                .andExpect(jsonPath("$.plans[1].priceGbpPence").value(1199))
                 .andExpect(jsonPath("$.plans[2].name").value("Pro"))
                 .andExpect(jsonPath("$.plans[2].tokenAmount").value(600000))
-                .andExpect(jsonPath("$.plans[2].priceGbpPence").value(3499));
+                .andExpect(jsonPath("$.plans[2].priceGbpPence").value(1999));
     }
 
     @Test
